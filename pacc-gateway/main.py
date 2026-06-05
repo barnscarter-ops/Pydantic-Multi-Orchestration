@@ -1,10 +1,12 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from dotenv import load_dotenv
 import os
 import json
+import subprocess
+import sys
 
 from schemas.gateway import GatewayRequest, GatewayResponse, FileSaveRequest
 from core.router import ModelRouter
@@ -58,15 +60,28 @@ async def generate(request: GatewayRequest):
 
 @app.get("/file")
 async def read_file(path: str):
-    """Reads a local file and returns its content."""
+    """Reads a local file and returns its content or lists directory contents."""
     if not path:
         raise HTTPException(status_code=400, detail="Path parameter is required")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     try:
+        if os.path.isdir(path):
+            files = []
+            for item in os.listdir(path):
+                full_item = os.path.join(path, item)
+                files.append({
+                    "name": item,
+                    "is_dir": os.path.isdir(full_item),
+                    "path": os.path.abspath(full_item)
+                })
+            # Sort directories first, then files alphabetically
+            files.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+            return {"path": os.path.abspath(path), "is_directory": True, "files": files}
+
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
-        return {"path": path, "content": content}
+        return {"path": os.path.abspath(path), "is_directory": False, "content": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
 
@@ -82,6 +97,80 @@ async def write_file(request: FileSaveRequest):
         return {"status": "success", "path": request.path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write file: {str(e)}")
+
+@app.get("/preview", response_class=HTMLResponse)
+async def preview_file(path: str):
+    """Renders a local HTML landing page file in the browser preview iframe."""
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter is required")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read preview file: {str(e)}")
+
+@app.post("/dialog/open-file")
+def open_file_dialog():
+    """Triggers a native Windows file open dialog in a safe separate subprocess."""
+    try:
+        py_cmd = (
+            "import tkinter as tk; "
+            "from tkinter import filedialog; "
+            "root = tk.Tk(); "
+            "root.withdraw(); "
+            "root.attributes('-topmost', True); "
+            "path = filedialog.askopenfilename(title='Select Workspace File'); "
+            "print(path); "
+            "root.destroy()"
+        )
+        output = subprocess.check_output([sys.executable, "-c", py_cmd], text=True, encoding="utf-8")
+        file_path = output.strip()
+        if not file_path:
+            return {"status": "cancelled", "path": ""}
+        return {"status": "success", "path": os.path.abspath(file_path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open file dialog: {str(e)}")
+
+@app.post("/dialog/open-folder")
+def open_folder_dialog():
+    """Triggers a native Windows folder open dialog in a safe separate subprocess."""
+    try:
+        py_cmd = (
+            "import tkinter as tk; "
+            "from tkinter import filedialog; "
+            "root = tk.Tk(); "
+            "root.withdraw(); "
+            "root.attributes('-topmost', True); "
+            "path = filedialog.askdirectory(title='Select Workspace Folder'); "
+            "print(path); "
+            "root.destroy()"
+        )
+        output = subprocess.check_output([sys.executable, "-c", py_cmd], text=True, encoding="utf-8")
+        folder_path = output.strip()
+        if not folder_path:
+            return {"status": "cancelled", "path": ""}
+        return {"status": "success", "path": os.path.abspath(folder_path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to open folder dialog: {str(e)}")
+
+@app.get("/browser-screenshot")
+def get_browser_screenshot():
+    """Serves the latest browser subagent screenshot from multiple possible locations."""
+    paths = [
+        r"C:\Users\carte\.gemini\antigravity-ide\brain\a8a85000-f802-4cda-8330-bbd4c3ffd1f7\browser_screenshot.png",
+        r"C:\Users\carte\.gemini\antigravity-ide\brain\a8a85000-f802-4cda-8330-bbd4c3ffd1f7\browser_view.png",
+        r"C:\Users\carte\.gemini\antigravity-ide\brain\a8a85000-f802-4cda-8330-bbd4c3ffd1f7\screenshot_ui.png",
+        r"C:\Users\carte\pacc-gateway\browser_screenshot.png",
+        r"C:\Users\carte\pacc-gateway\browser_view.png",
+        r"C:\Users\carte\pacc-gateway\mav-console\public\browser_screenshot.png"
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            return FileResponse(path, media_type="image/png")
+    raise HTTPException(status_code=404, detail="No screenshot available")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

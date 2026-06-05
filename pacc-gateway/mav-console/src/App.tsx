@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchAgents, fetchSkills, sendMessageStream, Agent, Skill, readFile, saveFile } from './services/api';
+import { fetchAgents, fetchSkills, sendMessageStream, Agent, Skill, readFile, saveFile, openFileDialog, openFolderDialog, DirectoryItem } from './services/api';
 
 interface Message {
   sender: 'USER' | 'PACC';
@@ -32,8 +32,14 @@ export default function App() {
   const [editorFilePath, setEditorFilePath] = useState('C:\\Users\\carte\\pacc-gateway\\config.yaml');
   const [editorStatus, setEditorStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [editorStatusMsg, setEditorStatusMsg] = useState('');
+  const [isDirMode, setIsDirMode] = useState(false);
+  const [dirFiles, setDirFiles] = useState<DirectoryItem[]>([]);
+  
+  // Preview states
   const [browserUrl, setBrowserUrl] = useState('http://localhost:3010');
   const [browserInputUrl, setBrowserInputUrl] = useState('http://localhost:3010');
+  const [previewMode, setPreviewMode] = useState<'web' | 'monitor'>('web');
+  const [screenshotRefreshKey, setScreenshotRefreshKey] = useState(Date.now());
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
@@ -64,6 +70,16 @@ export default function App() {
       setTkns('0.0');
     }
   }, [isGenerating]);
+
+  // Auto-refresh agent screenshots in monitor mode
+  useEffect(() => {
+    if (previewMode === 'monitor') {
+      const interval = setInterval(() => {
+        setScreenshotRefreshKey(Date.now());
+      }, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [previewMode]);
 
   // Fetch initial data & load default config file
   useEffect(() => {
@@ -101,21 +117,32 @@ export default function App() {
   // File loading helper
   const loadEditorFile = async (path: string) => {
     setEditorStatus('loading');
-    setEditorStatusMsg('Reading file from host...');
+    setEditorStatusMsg('Reading path from host...');
     try {
       const res = await readFile(path);
-      setEditorContent(res.content);
       setEditorFilePath(res.path);
-      setEditorStatus('success');
-      setEditorStatusMsg('File loaded successfully.');
+      if (res.is_directory) {
+        setIsDirMode(true);
+        setDirFiles(res.files || []);
+        setEditorContent('');
+        setEditorStatus('success');
+        setEditorStatusMsg('Directory loaded successfully.');
+      } else {
+        setIsDirMode(false);
+        setDirFiles([]);
+        setEditorContent(res.content || '');
+        setEditorStatus('success');
+        setEditorStatusMsg('File loaded successfully.');
+      }
     } catch (e: any) {
       setEditorStatus('error');
-      setEditorStatusMsg(e.message || 'Failed to read file.');
+      setEditorStatusMsg(e.message || 'Failed to read path.');
     }
   };
 
   // File saving helper
   const handleSaveFile = async () => {
+    if (isDirMode) return;
     setEditorStatus('loading');
     setEditorStatusMsg('Writing file to host...');
     try {
@@ -125,6 +152,44 @@ export default function App() {
     } catch (e: any) {
       setEditorStatus('error');
       setEditorStatusMsg(e.message || 'Failed to save file.');
+    }
+  };
+
+  // Native explorer dialog picker helper
+  const handleBrowseFile = async () => {
+    try {
+      setEditorStatus('loading');
+      setEditorStatusMsg('Opening file explorer...');
+      const res = await openFileDialog();
+      if (res.status === 'success' && res.path) {
+        setEditorFilePath(res.path);
+        await loadEditorFile(res.path);
+      } else {
+        setEditorStatus('idle');
+        setEditorStatusMsg('File selection cancelled.');
+      }
+    } catch (err: any) {
+      setEditorStatus('error');
+      setEditorStatusMsg(err.message || 'Failed to open file browser.');
+    }
+  };
+
+  // Native explorer dialog folder picker helper
+  const handleBrowseFolder = async () => {
+    try {
+      setEditorStatus('loading');
+      setEditorStatusMsg('Opening folder explorer...');
+      const res = await openFolderDialog();
+      if (res.status === 'success' && res.path) {
+        setEditorFilePath(res.path);
+        await loadEditorFile(res.path);
+      } else {
+        setEditorStatus('idle');
+        setEditorStatusMsg('Folder selection cancelled.');
+      }
+    } catch (err: any) {
+      setEditorStatus('error');
+      setEditorStatusMsg(err.message || 'Failed to open folder browser.');
     }
   };
 
@@ -162,6 +227,7 @@ export default function App() {
       }
     } else if (activeAgentId === 'mav-research') {
       setActiveTab('browser');
+      setPreviewMode('web'); // Switch to live web preview
       const urlRegex = /(https?:\/\/[^\s]+)/g;
       const match = userPrompt.match(urlRegex);
       if (match && match.length > 0) {
@@ -262,8 +328,8 @@ export default function App() {
       {/* --- MAIN HUD AREA --- */}
       <main className="flex-1 flex gap-2 overflow-hidden z-10">
         
-        {/* LEFT: Tabbed HUD Sidebar (Skills, Editor, Browser) */}
-        <aside className="w-80 flex flex-col gap-2">
+        {/* LEFT: Tabbed HUD Sidebar (Wider: w-[45rem] / 720px) */}
+        <aside className="w-[45rem] flex flex-col gap-2">
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-hidden">
             
             {/* TACTICAL TABS */}
@@ -299,7 +365,7 @@ export default function App() {
                     : 'border-transparent text-mav-blue/50 hover:text-white hover:bg-mav-blue/5'
                 }`}
               >
-                [ BROWSER ]
+                [ PREVIEW ]
               </button>
             </div>
 
@@ -332,7 +398,7 @@ export default function App() {
             {activeTab === 'editor' && (
               <div className="flex-1 flex flex-col gap-2 overflow-hidden">
                 {/* File path selector */}
-                <div className="flex items-center gap-1.5 text-xs">
+                <div className="flex items-center gap-1 text-xs">
                   <span className="text-mav-blue font-bold tracking-tight">PATH:</span>
                   <input
                     type="text"
@@ -347,6 +413,22 @@ export default function App() {
                   />
                   <button
                     type="button"
+                    onClick={handleBrowseFile}
+                    className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/45 text-white font-bold"
+                    title="Select a file"
+                  >
+                    [ FILE ]
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBrowseFolder}
+                    className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/45 text-white font-bold"
+                    title="Select a folder"
+                  >
+                    [ FOLDER ]
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => loadEditorFile(editorFilePath)}
                     className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/40 text-white font-bold"
                   >
@@ -354,30 +436,74 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Synced Code Area */}
+                {/* Synced Code Area or Workspace Directory Explorer */}
                 <div className="flex-1 border border-mav-blue/40 bg-mav-black flex overflow-hidden relative font-mono text-sm leading-relaxed mt-1">
-                  {/* Gutter */}
-                  <div
-                    ref={gutterRef}
-                    className="w-12 bg-mav-dark/80 text-mav-blue/40 text-right pr-2 select-none py-2 border-r border-mav-blue/20 overflow-hidden"
-                    style={{ minHeight: '100%' }}
-                  >
-                    {editorContent.split('\n').map((_, idx) => (
-                      <div key={idx} className="h-[22px] text-xs font-bold leading-[22px]">
-                        {idx + 1}
+                  {isDirMode ? (
+                    <div className="flex-1 flex flex-col overflow-y-auto p-3 gap-1.5 select-none text-xs">
+                      {/* Parent Directory Navigation */}
+                      <div 
+                        onClick={() => {
+                          let cleanPath = editorFilePath.replace(/[\\/]+$/, '');
+                          const lastIdx = Math.max(cleanPath.lastIndexOf('\\'), cleanPath.lastIndexOf('/'));
+                          if (lastIdx > 0) {
+                            const parentPath = cleanPath.substring(0, lastIdx);
+                            loadEditorFile(parentPath.endsWith(':') ? parentPath + '\\' : parentPath);
+                          } else if (cleanPath.includes(':')) {
+                            loadEditorFile(cleanPath + '\\');
+                          }
+                        }}
+                        className="cursor-pointer hover:bg-mav-blue/10 p-1.5 border border-transparent hover:border-mav-blue/20 text-mav-blue font-bold flex items-center gap-2"
+                      >
+                        <span>📁</span>
+                        <span>[..] Parent Directory</span>
                       </div>
-                    ))}
-                  </div>
-                  
-                  {/* Textarea */}
-                  <textarea
-                    ref={textareaRef}
-                    className="flex-1 bg-transparent border-none outline-none resize-none p-2 text-mav-chrome font-mono text-xs leading-[22px] overflow-auto h-full"
-                    value={editorContent}
-                    onChange={(e) => setEditorContent(e.target.value)}
-                    onScroll={handleScroll}
-                    spellCheck={false}
-                  />
+                      
+                      {dirFiles.map((file, idx) => (
+                        <div 
+                          key={idx}
+                          onClick={() => loadEditorFile(file.path)}
+                          className={`cursor-pointer p-2 border border-transparent hover:border-mav-blue/35 hover:bg-mav-blue/10 flex items-center justify-between transition-all duration-100 ${file.is_dir ? 'text-white font-bold' : 'text-mav-chrome'}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span>{file.is_dir ? '📁' : '📄'}</span>
+                            <span>{file.name}</span>
+                          </div>
+                          <span className="text-[10px] opacity-40 uppercase">
+                            {file.is_dir ? '[DIR]' : '[FILE]'}
+                          </span>
+                        </div>
+                      ))}
+                      
+                      {dirFiles.length === 0 && (
+                        <div className="p-4 text-center opacity-50 italic text-white">Empty Directory</div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      {/* Gutter */}
+                      <div
+                        ref={gutterRef}
+                        className="w-12 bg-mav-dark/80 text-mav-blue/40 text-right pr-2 select-none py-2 border-r border-mav-blue/20 overflow-hidden"
+                        style={{ minHeight: '100%' }}
+                      >
+                        {editorContent.split('\n').map((_, idx) => (
+                          <div key={idx} className="h-[22px] text-xs font-bold leading-[22px]">
+                            {idx + 1}
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Textarea */}
+                      <textarea
+                        ref={textareaRef}
+                        className="flex-1 bg-transparent border-none outline-none resize-none p-2 text-mav-chrome font-mono text-xs leading-[22px] overflow-auto h-full"
+                        value={editorContent}
+                        onChange={(e) => setEditorContent(e.target.value)}
+                        onScroll={handleScroll}
+                        spellCheck={false}
+                      />
+                    </>
+                  )}
                 </div>
 
                 {/* Status message */}
@@ -409,50 +535,115 @@ export default function App() {
               </div>
             )}
 
-            {/* TAB CONTENT: BROWSER */}
+            {/* TAB CONTENT: PREVIEW */}
             {activeTab === 'browser' && (
               <div className="flex-1 flex flex-col gap-2 overflow-hidden">
-                {/* Address input */}
-                <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-mav-blue font-bold tracking-tight">URL:</span>
-                  <input
-                    type="text"
-                    className="flex-1 bg-mav-black border border-mav-blue/40 px-2 py-1 text-mav-chrome font-mono focus:border-mav-blue outline-none"
-                    value={browserInputUrl}
-                    onChange={(e) => setBrowserInputUrl(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        setBrowserUrl(browserInputUrl);
-                      }
-                    }}
-                  />
+                {/* Preview Mode Selector */}
+                <div className="flex gap-1 border-b border-mav-blue/20 pb-1.5 mb-1">
                   <button
                     type="button"
-                    onClick={() => setBrowserUrl(browserInputUrl)}
-                    className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/40 text-white font-bold"
+                    onClick={() => setPreviewMode('web')}
+                    className={`flex-1 py-1 text-center text-[10px] font-black border transition-all duration-150 ${
+                      previewMode === 'web'
+                        ? 'border-mav-blue bg-mav-blue/15 text-white'
+                        : 'border-transparent text-mav-blue/40 hover:text-white hover:bg-mav-blue/5'
+                    }`}
                   >
-                    GO
+                    [ LIVE WEB PREVIEW ]
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('monitor')}
+                    className={`flex-1 py-1 text-center text-[10px] font-black border transition-all duration-150 ${
+                      previewMode === 'monitor'
+                        ? 'border-mav-blue bg-mav-blue/15 text-white'
+                        : 'border-transparent text-mav-blue/40 hover:text-white hover:bg-mav-blue/5'
+                    }`}
+                  >
+                    [ AGENT SCREEN MONITOR ]
                   </button>
                 </div>
 
-                {/* IFrame viewport */}
-                <div className="flex-1 border border-mav-blue/40 bg-white relative mt-1 overflow-hidden">
-                  <iframe
-                    src={browserUrl}
-                    className="w-full h-full border-none"
-                    title="Tactical HUD Web Preview"
-                  />
-                </div>
+                {previewMode === 'web' ? (
+                  <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+                    {/* Address input */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-mav-blue font-bold tracking-tight">URL/PATH:</span>
+                      <input
+                        type="text"
+                        className="flex-1 bg-mav-black border border-mav-blue/40 px-2 py-1 text-mav-chrome font-mono focus:border-mav-blue outline-none"
+                        value={browserInputUrl}
+                        onChange={(e) => setBrowserInputUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            setBrowserUrl(browserInputUrl);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBrowserInputUrl(editorFilePath);
+                          setBrowserUrl(editorFilePath);
+                        }}
+                        className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/45 text-white font-bold animate-pulse"
+                        title="Preview the active file from the editor"
+                      >
+                        [ ACTIVE FILE ]
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBrowserUrl(browserInputUrl)}
+                        className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/40 text-white font-bold"
+                      >
+                        GO
+                      </button>
+                    </div>
 
-                <div className="text-[10px] text-mav-chrome/60 italic leading-snug">
-                  * Note: Cross-origin restrictions may prevent some external sites from loading in standard iframes. Works best for local dashboards (e.g. NOC metrics).
-                </div>
+                    {/* IFrame viewport */}
+                    <div className="flex-1 border border-mav-blue/40 bg-white relative mt-1 overflow-hidden">
+                      <iframe
+                        src={
+                          browserUrl.startsWith('http://') || browserUrl.startsWith('https://')
+                            ? browserUrl
+                            : `http://localhost:8000/preview?path=${encodeURIComponent(browserUrl)}`
+                        }
+                        className="w-full h-full border-none"
+                        title="Tactical HUD Web Preview"
+                      />
+                    </div>
+
+                    <div className="text-[10px] text-mav-chrome/60 italic leading-snug">
+                      * Note: Local HTML paths (e.g. C:\path\to\landing.html) are rendered automatically via Gateway preview.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+                    <div className="text-[11px] text-white font-bold border-b border-mav-blue/30 pb-1 mb-1">
+                      &gt; BROWSER AGENT ACTIVITY MONITOR...
+                    </div>
+                    {/* Live image viewport */}
+                    <div className="flex-1 border border-mav-blue/40 bg-mav-black relative mt-1 overflow-hidden flex items-center justify-center">
+                      <img
+                        src={`http://localhost:8000/browser-screenshot?t=${screenshotRefreshKey}`}
+                        className="w-full h-full object-contain"
+                        alt="Agent Screen Monitor (No active screen)"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = '/logo-landscape.png';
+                        }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-neon-green/80 italic leading-snug">
+                      * Displaying live-updating viewport screenshot of the running browser subagent (refreshes every 2s).
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </aside>
 
-        {/* CENTER: The Console Log */}
+        {/* CENTER: The Console Log (Flexible remaining space) */}
         <section className="flex-1 flex flex-col gap-2 overflow-hidden">
           <div className="clipped-panel flex-1 p-4 overflow-y-auto flex flex-col gap-2 shadow-inner bg-mav-dark/50 backdrop-blur-sm">
             <div className="text-mav-chrome opacity-50 text-[10px] mb-4 italic">
@@ -502,10 +693,10 @@ export default function App() {
           </form>
         </section>
 
-        {/* RIGHT: Agent Roster */}
-        <aside className="w-80 flex flex-col gap-2">
+        {/* RIGHT: Agent Roster (Narrower: w-48 / 192px) */}
+        <aside className="w-48 flex flex-col gap-2">
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
-            <h3 className="text-base font-black mb-2 text-white border-b border-mav-blue pb-1.5">AGENT_ROSTER</h3>
+            <h3 className="text-sm font-black mb-2 text-white border-b border-mav-blue pb-1.5">AGENT_ROSTER</h3>
             {agents.map(agent => {
               const isActive = activeAgentId === agent.agent_id;
               const isAgentThinking = isActive && isGenerating;
@@ -513,20 +704,20 @@ export default function App() {
                 <div 
                   key={agent.agent_id} 
                   onClick={() => !isGenerating && setActiveAgentId(agent.agent_id)}
-                  className={`cursor-pointer p-4 border transition-all duration-200 ${
+                  className={`cursor-pointer p-2.5 border transition-all duration-200 ${
                     isActive 
                       ? 'border-mav-blue/80 bg-mav-blue/20 shadow-glow-mav' 
                       : 'border-mav-blue/40 bg-mav-dark hover:border-mav-blue/70'
                   }`}
                 >
-                  <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-base">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-sm">
                       <span className={isActive ? 'text-white font-black shadow-glow-mav' : 'text-white font-bold'}>
                         {agent.name}
                       </span>
-                      <span className={`w-3 h-3 rounded-full ${isAgentThinking ? 'bg-neon-green animate-ping' : 'bg-mav-blue'}`} />
+                      <span className={`w-2 h-2 rounded-full ${isAgentThinking ? 'bg-neon-green animate-ping' : 'bg-mav-blue'}`} />
                     </div>
-                    <span className="text-sm text-mav-chrome font-bold mt-1">
+                    <span className="text-xs text-mav-chrome font-bold mt-1">
                       {agent.primary_model}
                     </span>
                   </div>

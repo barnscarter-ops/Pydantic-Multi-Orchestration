@@ -104,7 +104,20 @@ export async function sendMessageStream(
   }
 }
 
-export async function readFile(path: string): Promise<{ path: string; content: string }> {
+export interface DirectoryItem {
+  name: string;
+  is_dir: boolean;
+  path: string;
+}
+
+export interface FileResponseData {
+  path: string;
+  is_directory: boolean;
+  content?: string;
+  files?: DirectoryItem[];
+}
+
+export async function readFile(path: string): Promise<FileResponseData> {
   const response = await fetch(`${GATEWAY_URL}/file?path=${encodeURIComponent(path)}`);
   if (!response.ok) {
     const text = await response.text();
@@ -120,6 +133,28 @@ export async function saveFile(path: string, content: string): Promise<{ status:
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json();
+}
+
+export async function openFileDialog(): Promise<{ status: string; path: string }> {
+  const response = await fetch(`${GATEWAY_URL}/dialog/open-file`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json();
+}
+
+export async function openFolderDialog(): Promise<{ status: string; path: string }> {
+  const response = await fetch(`${GATEWAY_URL}/dialog/open-folder`, {
+    method: 'POST',
   });
   if (!response.ok) {
     const text = await response.text();
