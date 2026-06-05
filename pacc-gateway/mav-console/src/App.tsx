@@ -34,6 +34,7 @@ export default function App() {
   const [editorStatusMsg, setEditorStatusMsg] = useState('');
   const [isDirMode, setIsDirMode] = useState(false);
   const [dirFiles, setDirFiles] = useState<DirectoryItem[]>([]);
+  const [bootState, setBootState] = useState<'frame1' | 'frame2' | 'frame3' | 'frame4' | 'complete'>('frame1');
   
   // Preview states
   const [browserUrl, setBrowserUrl] = useState('http://localhost:3010');
@@ -52,6 +53,20 @@ export default function App() {
       inputRef.current?.focus();
     }
   }, [isGenerating]);
+
+  // Boot sequence transition effect
+  useEffect(() => {
+    const timer1 = setTimeout(() => setBootState('frame2'), 800);
+    const timer2 = setTimeout(() => setBootState('frame3'), 2300);
+    const timer3 = setTimeout(() => setBootState('frame4'), 3500);
+    const timer4 = setTimeout(() => setBootState('complete'), 4500);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      clearTimeout(timer4);
+    };
+  }, []);
 
   // Time clock effect
   useEffect(() => {
@@ -306,16 +321,42 @@ export default function App() {
     <div className="h-screen w-screen bg-mav-black text-mav-blue font-mono relative overflow-hidden p-2 flex flex-col gap-2">
       <div className="crt-overlay" />
 
+      {/* --- MAVERICK CORE BOOT SEQUENCE OVERLAY --- */}
+      {bootState !== 'complete' && (
+        <div className={`fixed inset-0 bg-[#020205] z-50 flex flex-col items-center justify-center transition-opacity duration-1000 ${bootState === 'frame4' ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+          <div className={`w-[800px] h-[450px] relative flex items-center justify-center overflow-hidden transition-all duration-1000 transform ${bootState === 'frame4' ? '-translate-y-[120%]' : 'translate-y-0'}`}>
+            {bootState !== 'frame1' && (
+              <img
+                src="/Maverick-Integrations-Logo-V2++16x9.png"
+                alt="Maverick Core Logo"
+                className={`w-full h-full object-contain ${
+                  bootState === 'frame2' 
+                    ? 'core-pulsing' 
+                    : bootState === 'frame3' 
+                      ? 'logo-glitch' 
+                      : ''
+                }`}
+                style={
+                  bootState === 'frame2'
+                    ? { clipPath: 'inset(18% 30% 18% 30%)' }
+                    : undefined
+                }
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* --- GHOST WATERMARK --- */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5 z-0">
-        <img src="/logo-full.png" alt="Maverick Core" className="w-2/3 object-contain" />
+        <img src="/Maverick-Integrations-Logo-V2++16x9.png" alt="Maverick Core" className="w-5/6 object-contain" />
       </div>
 
       {/* --- GLOBAL HEADER --- */}
-      <header className="clipped-panel h-16 flex items-center justify-between px-4 shadow-glow-mav z-10">
+      <header className={`clipped-panel h-16 flex items-center justify-between px-4 shadow-glow-mav z-10 transition-transform duration-500 transform ${bootState === 'frame4' || bootState === 'complete' ? 'translate-y-0' : '-translate-y-[120%]'}`}>
         <div className="flex items-center gap-4">
           {/* BRAND LOGO */}
-          <img src="/logo-landscape.png" alt="Maverick Integrations" className="h-10 w-auto object-contain" />
+          <img src="/Maverick-Integrations-Logo-V2++.png" alt="Maverick Integrations" className="h-10 w-auto object-contain logo-breathing" />
           <div className="flex flex-col">
             <span className="font-black tracking-tighter text-white leading-none text-base">SYSTEM_OS</span>
             <span className="text-sm text-mav-chrome font-bold mt-0.5">LOCATION: DFW_TX</span>
@@ -329,7 +370,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 text-white font-black">
             <span className="w-2.5 h-2.5 bg-mav-blue rounded-full animate-pulse" />
-            <span>MUSCLE: ACTIVE (PC)</span>
+            <span>MAVERICK CORE STATUS: ONLINE</span>
           </div>
           <span className="text-white font-black text-base">{currentTime || '12:00:00 UTC'}</span>
         </div>
@@ -339,7 +380,7 @@ export default function App() {
       <main className="flex-1 flex gap-2 overflow-hidden z-10">
         
         {/* LEFT: Tabbed HUD Sidebar (Dynamic width: w-80 on skills, w-[38rem] on editor/browser) */}
-        <aside className={`${activeTab === 'skills' ? 'w-80' : 'w-[38rem]'} flex flex-col gap-2 transition-all duration-200`}>
+        <aside className={`${activeTab === 'skills' ? 'w-80' : 'w-[38rem]'} flex flex-col gap-2 transition-all duration-300 transform ${bootState === 'frame4' || bootState === 'complete' ? 'translate-x-0' : '-translate-x-[120%]'}`}>
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-hidden">
             
             {/* TACTICAL TABS */}
@@ -654,7 +695,7 @@ export default function App() {
         </aside>
 
         {/* CENTER: The Console Log (Flexible remaining space) */}
-        <section className="flex-1 flex flex-col gap-2 overflow-hidden">
+        <section className={`flex-1 flex flex-col gap-2 overflow-hidden transition-all duration-300 transform ${bootState === 'frame4' || bootState === 'complete' ? 'translate-y-0' : 'translate-y-[120%]'}`}>
           <div className="clipped-panel flex-1 p-4 overflow-y-auto flex flex-col gap-2 shadow-inner bg-mav-dark/50 backdrop-blur-sm">
             <div className="text-mav-chrome opacity-50 text-[10px] mb-4 italic">
               &gt; INITIALIZING MAVERICK CORE... <br />
@@ -705,7 +746,7 @@ export default function App() {
         </section>
 
         {/* RIGHT: Agent Roster (Narrower: w-48 / 192px) */}
-        <aside className="w-48 flex flex-col gap-2">
+        <aside className={`w-48 flex flex-col gap-2 transition-all duration-300 transform ${bootState === 'frame4' || bootState === 'complete' ? 'translate-x-0' : 'translate-x-[120%]'}`}>
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
             <h3 className="text-sm font-black mb-2 text-white border-b border-mav-blue pb-1.5">AGENT_ROSTER</h3>
             {agents.map(agent => {
@@ -743,14 +784,62 @@ export default function App() {
       </main>
 
       {/* --- TELEMETRY STRIP --- */}
-      <footer className="clipped-panel h-12 flex items-center justify-between px-4 text-sm shadow-glow-mav z-10 font-bold text-white">
+      <footer className={`clipped-panel h-12 flex items-center justify-between px-4 text-sm shadow-glow-mav z-10 font-bold text-white transition-transform duration-500 transform ${bootState === 'frame4' || bootState === 'complete' ? 'translate-y-0' : 'translate-y-[120%]'}`}>
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-white">
-            <span className="text-mav-chrome font-bold">VRAM:</span>
-            <div className="w-24 h-2 bg-mav-black border border-mav-blue/30 relative">
-              <div className="absolute top-0 left-0 h-full bg-mav-blue shadow-glow-mav" style={{width: '65%'}} />
+          {/* Concentric Energy Ring Gauge */}
+          <div className="flex items-center gap-3">
+            <span className="text-mav-chrome font-bold text-xs uppercase tracking-wider">MAVERICK CORE STATUS:</span>
+            <div className="relative w-10 h-10 flex items-center justify-center">
+              {/* Background ring */}
+              <svg className="absolute w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                <circle
+                  cx="18"
+                  cy="18"
+                  r="16"
+                  fill="none"
+                  stroke="#020205"
+                  strokeWidth="3.5"
+                />
+                {/* Outer dashed ring (static/background) */}
+                <circle
+                  cx="18"
+                  cy="18"
+                  r="16"
+                  fill="none"
+                  stroke="#00A3FF"
+                  strokeWidth="1.5"
+                  strokeDasharray="4, 2"
+                  className="opacity-25"
+                />
+                {/* Active segment ring (shows VRAM / Core status) */}
+                <circle
+                  cx="18"
+                  cy="18"
+                  r="16"
+                  fill="none"
+                  stroke="#00A3FF"
+                  strokeWidth="2.5"
+                  strokeDasharray="100"
+                  strokeDashoffset={100 - 65}
+                  className="shadow-glow-mav transition-all duration-500"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {/* Inner spinning energy ring */}
+              <svg className="absolute w-7 h-7 animate-spin-slow" viewBox="0 0 36 36">
+                <circle
+                  cx="18"
+                  cy="18"
+                  r="13"
+                  fill="none"
+                  stroke="#00A3FF"
+                  strokeWidth="1.5"
+                  strokeDasharray="6, 8"
+                  className="opacity-75"
+                />
+              </svg>
+              <span className="text-[9px] text-white font-black">65%</span>
             </div>
-            <span className="text-white font-bold text-sm">65%</span>
           </div>
           <div className="flex items-center gap-2 text-white">
             <span className="text-mav-chrome font-bold">TKN/S:</span>

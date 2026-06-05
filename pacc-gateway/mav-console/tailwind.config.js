@@ -7,8 +7,8 @@ export default {
         "mav-black": "#020205",
         "mav-dark": "#0a0a15",
         "mav-blue": "#00A3FF",
-        "mav-chrome": "#d8f3ff",
-        "mav-alert": "#ff2b45",
+        "mav-chrome": "#E0E0E0",
+        "mav-alert": "#FF003C",
         "neon-green": "#25ff8a",
       },
       boxShadow: {
