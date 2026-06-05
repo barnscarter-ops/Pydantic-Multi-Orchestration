@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import os
 import json
 
-from schemas.gateway import GatewayRequest, GatewayResponse
+from schemas.gateway import GatewayRequest, GatewayResponse, FileSaveRequest
 from core.router import ModelRouter
 
 # Load environment variables
@@ -55,6 +55,33 @@ async def generate(request: GatewayRequest):
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/file")
+async def read_file(path: str):
+    """Reads a local file and returns its content."""
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter is required")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"path": path, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+@app.post("/file")
+async def write_file(request: FileSaveRequest):
+    """Writes content to a local file path."""
+    try:
+        directory = os.path.dirname(request.path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+        with open(request.path, "w", encoding="utf-8") as f:
+            f.write(request.content)
+        return {"status": "success", "path": request.path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write file: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchAgents, fetchSkills, sendMessageStream, Agent, Skill } from './services/api';
+import { fetchAgents, fetchSkills, sendMessageStream, Agent, Skill, readFile, saveFile } from './services/api';
 
 interface Message {
   sender: 'USER' | 'PACC';
@@ -24,8 +24,20 @@ export default function App() {
   ]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
+  const [tkns, setTkns] = useState('0.0');
+
+  // Sidebar Workspace Tabs State
+  const [activeTab, setActiveTab] = useState<'skills' | 'editor' | 'browser'>('skills');
+  const [editorContent, setEditorContent] = useState('');
+  const [editorFilePath, setEditorFilePath] = useState('C:\\Users\\carte\\pacc-gateway\\config.yaml');
+  const [editorStatus, setEditorStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [editorStatusMsg, setEditorStatusMsg] = useState('');
+  const [browserUrl, setBrowserUrl] = useState('http://localhost:3010');
+  const [browserInputUrl, setBrowserInputUrl] = useState('http://localhost:3010');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Time clock effect
   useEffect(() => {
@@ -39,7 +51,21 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch initial data
+  // Fluctuating TKN/S logic with slower 2.5-second update interval
+  useEffect(() => {
+    if (isGenerating) {
+      setTkns((38.5 + Math.random() * 5.0).toFixed(1));
+      const interval = setInterval(() => {
+        const randomVal = (38.0 + Math.random() * 7.0).toFixed(1);
+        setTkns(randomVal);
+      }, 2500);
+      return () => clearInterval(interval);
+    } else {
+      setTkns('0.0');
+    }
+  }, [isGenerating]);
+
+  // Fetch initial data & load default config file
   useEffect(() => {
     async function loadData() {
       try {
@@ -62,6 +88,7 @@ export default function App() {
       }
     }
     loadData();
+    loadEditorFile(editorFilePath);
   }, []);
 
   // Auto-scroll chat to bottom
@@ -71,6 +98,43 @@ export default function App() {
 
   const activeAgent = agents.find(a => a.agent_id === activeAgentId);
 
+  // File loading helper
+  const loadEditorFile = async (path: string) => {
+    setEditorStatus('loading');
+    setEditorStatusMsg('Reading file from host...');
+    try {
+      const res = await readFile(path);
+      setEditorContent(res.content);
+      setEditorFilePath(res.path);
+      setEditorStatus('success');
+      setEditorStatusMsg('File loaded successfully.');
+    } catch (e: any) {
+      setEditorStatus('error');
+      setEditorStatusMsg(e.message || 'Failed to read file.');
+    }
+  };
+
+  // File saving helper
+  const handleSaveFile = async () => {
+    setEditorStatus('loading');
+    setEditorStatusMsg('Writing file to host...');
+    try {
+      await saveFile(editorFilePath, editorContent);
+      setEditorStatus('success');
+      setEditorStatusMsg('File saved successfully.');
+    } catch (e: any) {
+      setEditorStatus('error');
+      setEditorStatusMsg(e.message || 'Failed to save file.');
+    }
+  };
+
+  // Sync scroll between textarea and line gutter
+  const handleScroll = () => {
+    if (textareaRef.current && gutterRef.current) {
+      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isGenerating || !activeAgentId) return;
@@ -78,6 +142,33 @@ export default function App() {
     const userPrompt = input;
     setInput('');
     setIsGenerating(true);
+
+    // Context-Aware Auto-Switching Triggers
+    if (activeAgentId === 'mav-coder' || activeAgentId === 'goldenpathagent') {
+      setActiveTab('editor');
+      // Look for a Windows absolute path or simple filename in the query
+      const winPathRegex = /[a-zA-Z]:\\[\\\w\.\-\_]+/g;
+      const simpleFileRegex = /[\w\.\-\_]+\.(py|js|ts|tsx|json|yaml|yml|md|txt)/g;
+      const matchWin = userPrompt.match(winPathRegex);
+      if (matchWin && matchWin.length > 0) {
+        loadEditorFile(matchWin[0]);
+      } else {
+        const matchSimple = userPrompt.match(simpleFileRegex);
+        if (matchSimple && matchSimple.length > 0) {
+          const pathName = matchSimple[0];
+          const fullPath = `C:\\Users\\carte\\pacc-gateway\\${pathName}`;
+          loadEditorFile(fullPath);
+        }
+      }
+    } else if (activeAgentId === 'mav-research') {
+      setActiveTab('browser');
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const match = userPrompt.match(urlRegex);
+      if (match && match.length > 0) {
+        setBrowserUrl(match[0]);
+        setBrowserInputUrl(match[0]);
+      }
+    }
 
     // 1. Add user message
     setChatHistory(prev => [...prev, { sender: 'USER', content: userPrompt }]);
@@ -150,48 +241,213 @@ export default function App() {
           {/* BRAND LOGO */}
           <img src="/logo-landscape.png" alt="Maverick Integrations" className="h-10 w-auto object-contain" />
           <div className="flex flex-col">
-            <span className="font-bold tracking-tighter text-mav-chrome leading-none">SYSTEM_OS</span>
-            <span className="text-[10px] opacity-50">LOCATION: DFW_TX</span>
+            <span className="font-black tracking-tighter text-white leading-none text-base">SYSTEM_OS</span>
+            <span className="text-sm text-mav-chrome font-bold mt-0.5">LOCATION: DFW_TX</span>
           </div>
         </div>
         
-        <div className="flex items-center gap-6 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 bg-mav-blue rounded-full animate-pulse" />
+        <div className="flex items-center gap-6 text-sm font-bold">
+          <div className="flex items-center gap-2 text-white font-black">
+            <span className="w-2.5 h-2.5 bg-mav-blue rounded-full animate-pulse" />
             <span>BRAIN: ONLINE (PROXMOX)</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 bg-mav-blue rounded-full animate-pulse" />
+          <div className="flex items-center gap-2 text-white font-black">
+            <span className="w-2.5 h-2.5 bg-mav-blue rounded-full animate-pulse" />
             <span>MUSCLE: ACTIVE (PC)</span>
           </div>
-          <span className="text-mav-chrome font-bold">{currentTime || '12:00:00 UTC'}</span>
+          <span className="text-white font-black text-base">{currentTime || '12:00:00 UTC'}</span>
         </div>
       </header>
 
       {/* --- MAIN HUD AREA --- */}
       <main className="flex-1 flex gap-2 overflow-hidden z-10">
         
-        {/* LEFT: Skill Manifest */}
-        <aside className="w-64 flex flex-col gap-2">
-          <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
-            <h3 className="text-xs font-bold mb-2 opacity-70 border-b border-mav-blue/30 pb-1">AUTHORIZED_SKILLS</h3>
-            {skills.map(skill => {
-              const isAuthorized = activeAgent?.authorized_skills?.includes(skill.skill_id);
-              const status = isAuthorized ? (isGenerating ? 'executing' : 'ready') : 'locked';
-              return (
-                <div key={skill.skill_id} className="flex flex-col gap-1 text-[10px] p-2 bg-mav-dark border border-mav-blue/20">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold">{skill.skill_id.toUpperCase()}</span>
-                    <span className={`uppercase ${status === 'ready' ? 'text-mav-blue' : status === 'executing' ? 'text-neon-green animate-pulse' : 'text-mav-alert'}`}>
-                      [{status}]
-                    </span>
-                  </div>
-                  <span className="opacity-50 text-[9px] leading-tight">{skill.description}</span>
+        {/* LEFT: Tabbed HUD Sidebar (Skills, Editor, Browser) */}
+        <aside className="w-80 flex flex-col gap-2">
+          <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-hidden">
+            
+            {/* TACTICAL TABS */}
+            <div className="flex gap-1 border-b border-mav-blue/30 pb-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('skills')}
+                className={`flex-1 py-1.5 text-center text-xs font-black tracking-tighter border transition-all duration-150 ${
+                  activeTab === 'skills'
+                    ? 'border-mav-blue bg-mav-blue/20 text-white shadow-glow-mav'
+                    : 'border-transparent text-mav-blue/50 hover:text-white hover:bg-mav-blue/5'
+                }`}
+              >
+                [ SKILLS ]
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('editor')}
+                className={`flex-1 py-1.5 text-center text-xs font-black tracking-tighter border transition-all duration-150 ${
+                  activeTab === 'editor'
+                    ? 'border-mav-blue bg-mav-blue/20 text-white shadow-glow-mav'
+                    : 'border-transparent text-mav-blue/50 hover:text-white hover:bg-mav-blue/5'
+                }`}
+              >
+                [ EDITOR ]
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('browser')}
+                className={`flex-1 py-1.5 text-center text-xs font-black tracking-tighter border transition-all duration-150 ${
+                  activeTab === 'browser'
+                    ? 'border-mav-blue bg-mav-blue/20 text-white shadow-glow-mav'
+                    : 'border-transparent text-mav-blue/50 hover:text-white hover:bg-mav-blue/5'
+                }`}
+              >
+                [ BROWSER ]
+              </button>
+            </div>
+
+            {/* TAB CONTENT: SKILLS */}
+            {activeTab === 'skills' && (
+              <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1">
+                <h3 className="text-sm font-black text-white border-b border-mav-blue/30 pb-1">AUTHORIZED_SKILLS</h3>
+                {skills.map(skill => {
+                  const isAuthorized = activeAgent?.authorized_skills?.includes(skill.skill_id);
+                  const status = isAuthorized ? (isGenerating ? 'executing' : 'ready') : 'locked';
+                  return (
+                    <div key={skill.skill_id} className="flex flex-col gap-1 text-sm p-3 bg-mav-dark border border-mav-blue/50">
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-white">{skill.skill_id.toUpperCase()}</span>
+                        <span className={`uppercase font-black text-sm ${status === 'ready' ? 'text-mav-blue' : status === 'executing' ? 'text-neon-green animate-pulse' : 'text-mav-alert'}`}>
+                          [{status}]
+                        </span>
+                      </div>
+                      <span className="text-mav-chrome font-medium text-xs leading-normal mt-1">{skill.description}</span>
+                    </div>
+                  );
+                })}
+                {skills.length === 0 && (
+                  <div className="text-sm opacity-50 italic text-white">No skills registered.</div>
+                )}
+              </div>
+            )}
+
+            {/* TAB CONTENT: EDITOR */}
+            {activeTab === 'editor' && (
+              <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+                {/* File path selector */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-mav-blue font-bold tracking-tight">PATH:</span>
+                  <input
+                    type="text"
+                    className="flex-1 bg-mav-black border border-mav-blue/40 px-2 py-1 text-mav-chrome font-mono focus:border-mav-blue outline-none"
+                    value={editorFilePath}
+                    onChange={(e) => setEditorFilePath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        loadEditorFile(editorFilePath);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => loadEditorFile(editorFilePath)}
+                    className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/40 text-white font-bold"
+                  >
+                    LOAD
+                  </button>
                 </div>
-              );
-            })}
-            {skills.length === 0 && (
-              <div className="text-[10px] opacity-50 italic">No skills registered.</div>
+
+                {/* Synced Code Area */}
+                <div className="flex-1 border border-mav-blue/40 bg-mav-black flex overflow-hidden relative font-mono text-sm leading-relaxed mt-1">
+                  {/* Gutter */}
+                  <div
+                    ref={gutterRef}
+                    className="w-12 bg-mav-dark/80 text-mav-blue/40 text-right pr-2 select-none py-2 border-r border-mav-blue/20 overflow-hidden"
+                    style={{ minHeight: '100%' }}
+                  >
+                    {editorContent.split('\n').map((_, idx) => (
+                      <div key={idx} className="h-[22px] text-xs font-bold leading-[22px]">
+                        {idx + 1}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Textarea */}
+                  <textarea
+                    ref={textareaRef}
+                    className="flex-1 bg-transparent border-none outline-none resize-none p-2 text-mav-chrome font-mono text-xs leading-[22px] overflow-auto h-full"
+                    value={editorContent}
+                    onChange={(e) => setEditorContent(e.target.value)}
+                    onScroll={handleScroll}
+                    spellCheck={false}
+                  />
+                </div>
+
+                {/* Status message */}
+                {editorStatusMsg && (
+                  <div className={`text-[11px] font-bold ${editorStatus === 'success' ? 'text-neon-green' : editorStatus === 'error' ? 'text-mav-alert' : 'text-mav-blue animate-pulse'}`}>
+                    &gt; {editorStatusMsg.toUpperCase()}
+                  </div>
+                )}
+
+                {/* Editor Controls */}
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveFile}
+                    disabled={editorStatus === 'loading'}
+                    className="flex-1 py-1.5 bg-mav-blue/20 border border-mav-blue text-white font-bold text-xs hover:bg-mav-blue/45 disabled:opacity-50"
+                  >
+                    [ SAVE CHANGES ]
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loadEditorFile(editorFilePath)}
+                    disabled={editorStatus === 'loading'}
+                    className="px-3 py-1.5 bg-mav-dark border border-mav-blue/40 text-mav-chrome font-bold text-xs hover:border-mav-blue disabled:opacity-50"
+                  >
+                    REVERT
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: BROWSER */}
+            {activeTab === 'browser' && (
+              <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+                {/* Address input */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-mav-blue font-bold tracking-tight">URL:</span>
+                  <input
+                    type="text"
+                    className="flex-1 bg-mav-black border border-mav-blue/40 px-2 py-1 text-mav-chrome font-mono focus:border-mav-blue outline-none"
+                    value={browserInputUrl}
+                    onChange={(e) => setBrowserInputUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setBrowserUrl(browserInputUrl);
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBrowserUrl(browserInputUrl)}
+                    className="px-2 py-1 bg-mav-blue/20 border border-mav-blue hover:bg-mav-blue/40 text-white font-bold"
+                  >
+                    GO
+                  </button>
+                </div>
+
+                {/* IFrame viewport */}
+                <div className="flex-1 border border-mav-blue/40 bg-white relative mt-1 overflow-hidden">
+                  <iframe
+                    src={browserUrl}
+                    className="w-full h-full border-none"
+                    title="Tactical HUD Web Preview"
+                  />
+                </div>
+
+                <div className="text-[10px] text-mav-chrome/60 italic leading-snug">
+                  * Note: Cross-origin restrictions may prevent some external sites from loading in standard iframes. Works best for local dashboards (e.g. NOC metrics).
+                </div>
+              </div>
             )}
           </div>
         </aside>
@@ -247,9 +503,9 @@ export default function App() {
         </section>
 
         {/* RIGHT: Agent Roster */}
-        <aside className="w-64 flex flex-col gap-2">
+        <aside className="w-80 flex flex-col gap-2">
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-y-auto">
-            <h3 className="text-xs font-bold mb-2 opacity-70 border-b border-mav-blue/30 pb-1">AGENT_ROSTER</h3>
+            <h3 className="text-base font-black mb-2 text-white border-b border-mav-blue pb-1.5">AGENT_ROSTER</h3>
             {agents.map(agent => {
               const isActive = activeAgentId === agent.agent_id;
               const isAgentThinking = isActive && isGenerating;
@@ -257,20 +513,20 @@ export default function App() {
                 <div 
                   key={agent.agent_id} 
                   onClick={() => !isGenerating && setActiveAgentId(agent.agent_id)}
-                  className={`cursor-pointer p-2 border transition-all duration-200 ${
+                  className={`cursor-pointer p-4 border transition-all duration-200 ${
                     isActive 
-                      ? 'border-mav-blue bg-mav-blue/10 shadow-glow-mav' 
-                      : 'border-mav-blue/20 bg-mav-dark hover:border-mav-blue/50'
+                      ? 'border-mav-blue/80 bg-mav-blue/20 shadow-glow-mav' 
+                      : 'border-mav-blue/40 bg-mav-dark hover:border-mav-blue/70'
                   }`}
                 >
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className={isActive ? 'text-mav-blue font-bold' : 'text-mav-chrome'}>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-base">
+                      <span className={isActive ? 'text-white font-black shadow-glow-mav' : 'text-white font-bold'}>
                         {agent.name}
                       </span>
-                      <span className={`w-2 h-2 rounded-full ${isAgentThinking ? 'bg-neon-green animate-ping' : 'bg-mav-blue'}`} />
+                      <span className={`w-3 h-3 rounded-full ${isAgentThinking ? 'bg-neon-green animate-ping' : 'bg-mav-blue'}`} />
                     </div>
-                    <span className="text-[9px] opacity-50 leading-tight">
+                    <span className="text-sm text-mav-chrome font-bold mt-1">
                       {agent.primary_model}
                     </span>
                   </div>
@@ -278,34 +534,34 @@ export default function App() {
               );
             })}
             {agents.length === 0 && (
-              <div className="text-xs opacity-50 italic">Loading agent registry...</div>
+              <div className="text-sm opacity-50 italic text-white">Loading agent registry...</div>
             )}
           </div>
         </aside>
       </main>
 
       {/* --- TELEMETRY STRIP --- */}
-      <footer className="clipped-panel h-10 flex items-center justify-between px-4 text-[10px] shadow-glow-mav z-10">
+      <footer className="clipped-panel h-12 flex items-center justify-between px-4 text-sm shadow-glow-mav z-10 font-bold text-white">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <span>VRAM:</span>
+          <div className="flex items-center gap-2 text-white">
+            <span className="text-mav-chrome font-bold">VRAM:</span>
             <div className="w-24 h-2 bg-mav-black border border-mav-blue/30 relative">
               <div className="absolute top-0 left-0 h-full bg-mav-blue shadow-glow-mav" style={{width: '65%'}} />
             </div>
-            <span className="text-mav-chrome">65%</span>
+            <span className="text-white font-bold text-sm">65%</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span>TKN/S:</span>
-            <span className="text-mav-chrome font-bold">{isGenerating ? '48.2' : '0.0'}</span>
+          <div className="flex items-center gap-2 text-white">
+            <span className="text-mav-chrome font-bold">TKN/S:</span>
+            <span className="text-white font-bold text-sm">{tkns}</span>
           </div>
         </div>
 
         <button 
           onClick={() => setIsEscalated(prev => !prev)}
-          className={`px-3 py-1 font-bold transition-all duration-200 uppercase flex items-center gap-2 ${
+          className={`px-4 py-1.5 font-black text-sm transition-all duration-200 uppercase flex items-center gap-2 ${
             isEscalated 
               ? 'bg-mav-alert text-white shadow-glow-alert animate-pulse border border-red-600' 
-              : 'bg-mav-dark text-mav-chrome border border-mav-blue/30 hover:border-mav-alert hover:text-mav-alert'
+              : 'bg-mav-dark text-white border border-mav-blue/40 hover:border-mav-alert hover:text-mav-alert'
           }`}
         >
           ⚠️ {isEscalated ? 'Forcing Cloud Escalation' : 'Escalate to Cloud'}

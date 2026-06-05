@@ -103,3 +103,27 @@ export async function sendMessageStream(
     reader.releaseLock();
   }
 }
+
+export async function readFile(path: string): Promise<{ path: string; content: string }> {
+  const response = await fetch(`${GATEWAY_URL}/file?path=${encodeURIComponent(path)}`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json();
+}
+
+export async function saveFile(path: string, content: string): Promise<{ status: string; path: string }> {
+  const response = await fetch(`${GATEWAY_URL}/file`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json();
+}

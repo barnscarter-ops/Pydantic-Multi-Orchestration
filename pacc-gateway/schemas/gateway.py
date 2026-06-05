@@ -39,3 +39,8 @@ class AgentManifest(BaseModel):
     fallback_model: str
     authorized_skills: List[str] = Field(default_factory=list)
     params: AgentParams = Field(default_factory=AgentParams)
+
+class FileSaveRequest(BaseModel):
+    """Schema for file save request payload."""
+    path: str
+    content: str
