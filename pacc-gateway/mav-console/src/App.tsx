@@ -272,7 +272,9 @@ export default function App() {
             }
             return prev;
           });
-        }
+        },
+        editorFilePath,
+        isDirMode ? "" : editorContent
       );
     } catch (err: any) {
       console.error(err);
@@ -328,8 +330,8 @@ export default function App() {
       {/* --- MAIN HUD AREA --- */}
       <main className="flex-1 flex gap-2 overflow-hidden z-10">
         
-        {/* LEFT: Tabbed HUD Sidebar (Wider: w-[45rem] / 720px) */}
-        <aside className="w-[45rem] flex flex-col gap-2">
+        {/* LEFT: Tabbed HUD Sidebar (Dynamic width: w-80 on skills, w-[38rem] on editor/browser) */}
+        <aside className={`${activeTab === 'skills' ? 'w-80' : 'w-[38rem]'} flex flex-col gap-2 transition-all duration-200`}>
           <div className="clipped-panel flex-1 p-3 flex flex-col gap-3 overflow-hidden">
             
             {/* TACTICAL TABS */}

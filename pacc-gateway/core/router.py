@@ -41,6 +41,20 @@ class ModelRouter:
         Routes the request based on the manifest fetched from the Registry.
         Request -> Registry (Handshake) -> Local Model -> Paid Model
         """
+        # Inject active editor file context if provided in metadata
+        if request.metadata:
+            editor_path = request.metadata.get("editor_file_path")
+            editor_content = request.metadata.get("editor_file_content")
+            if editor_path and editor_content:
+                context_str = (
+                    f"[CONTEXT: ACTIVE EDITOR FILE]\n"
+                    f"File: {editor_path}\n"
+                    f"Content:\n"
+                    f"```\n{editor_content}\n```\n"
+                    f"[END OF CONTEXT]\n\n"
+                )
+                request.prompt = context_str + request.prompt
+
         # 1. Handshake: Fetch Policy
         logger.info(f"Performing handshake for agent: {request.agent_id}")
         manifest = await self._fetch_manifest(request.agent_id)
@@ -103,6 +117,20 @@ class ModelRouter:
         """
         Routes the streaming request based on the manifest fetched from the Registry.
         """
+        # Inject active editor file context if provided in metadata
+        if request.metadata:
+            editor_path = request.metadata.get("editor_file_path")
+            editor_content = request.metadata.get("editor_file_content")
+            if editor_path and editor_content:
+                context_str = (
+                    f"[CONTEXT: ACTIVE EDITOR FILE]\n"
+                    f"File: {editor_path}\n"
+                    f"Content:\n"
+                    f"```\n{editor_content}\n```\n"
+                    f"[END OF CONTEXT]\n\n"
+                )
+                request.prompt = context_str + request.prompt
+
         logger.info(f"Performing handshake for agent stream: {request.agent_id}")
         manifest = await self._fetch_manifest(request.agent_id)
 

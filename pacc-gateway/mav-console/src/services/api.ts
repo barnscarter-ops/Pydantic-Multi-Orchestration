@@ -51,8 +51,16 @@ export async function sendMessageStream(
   prompt: string,
   agentId: string,
   forceEscalate: boolean,
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  editorFilePath?: string,
+  editorFileContent?: string
 ): Promise<void> {
+  const metadata: Record<string, any> = {};
+  if (editorFilePath) {
+    metadata.editor_file_path = editorFilePath;
+    metadata.editor_file_content = editorFileContent || '';
+  }
+
   const response = await fetch(`${GATEWAY_URL}/generate`, {
     method: 'POST',
     headers: {
@@ -63,6 +71,7 @@ export async function sendMessageStream(
       agent_id: agentId,
       stream: true,
       force_escalate: forceEscalate,
+      metadata,
     }),
   });
 
