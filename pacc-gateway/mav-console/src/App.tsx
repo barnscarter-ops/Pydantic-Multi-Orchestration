@@ -44,6 +44,14 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus prompt input box after generation finishes
+  useEffect(() => {
+    if (!isGenerating) {
+      inputRef.current?.focus();
+    }
+  }, [isGenerating]);
 
   // Time clock effect
   useEffect(() => {
@@ -685,6 +693,7 @@ export default function App() {
           <form onSubmit={handleSubmit} className="clipped-panel h-16 p-2 flex items-center gap-3 shadow-glow-mav">
             <span className="text-mav-blue font-bold pl-2">CMD &gt;</span>
             <input 
+              ref={inputRef}
               type="text" 
               className="bg-transparent border-none outline-none flex-1 text-mav-chrome placeholder-mav-blue/30"
               placeholder={isGenerating ? 'Awaiting response stream...' : 'Enter command or ask active agent...'}
