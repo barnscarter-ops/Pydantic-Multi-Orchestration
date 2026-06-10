@@ -28,8 +28,8 @@ export interface StreamChunk {
   error?: string;
 }
 
-const REGISTRY_URL = 'http://192.168.1.12:8001';
-const GATEWAY_URL = 'http://localhost:8000';
+const REGISTRY_URL = import.meta.env.VITE_REGISTRY_URL || 'http://192.168.1.12:8001';
+const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8000';
 
 export async function fetchAgents(): Promise<Agent[]> {
   const response = await fetch(`${REGISTRY_URL}/agents`);
@@ -53,7 +53,8 @@ export async function sendMessageStream(
   forceEscalate: boolean,
   onChunk: (chunk: StreamChunk) => void,
   editorFilePath?: string,
-  editorFileContent?: string
+  editorFileContent?: string,
+  signal?: AbortSignal
 ): Promise<void> {
   const metadata: Record<string, any> = {};
   if (editorFilePath) {
@@ -73,6 +74,7 @@ export async function sendMessageStream(
       force_escalate: forceEscalate,
       metadata,
     }),
+    signal,
   });
 
   if (!response.ok) {

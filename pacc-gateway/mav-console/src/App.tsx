@@ -39,20 +39,41 @@ export default function App() {
   // Preview states
   const [browserUrl, setBrowserUrl] = useState('http://localhost:3010');
   const [browserInputUrl, setBrowserInputUrl] = useState('http://localhost:3010');
-  const [previewMode, setPreviewMode] = useState<'web' | 'monitor'>('web');
+  const [previewMode, setPreviewMode] = useState<'web' | 'monitor' | 'noc'>('web');
   const [screenshotRefreshKey, setScreenshotRefreshKey] = useState(Date.now());
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Auto-focus prompt input box after generation finishes
+  // Auto-focus prompt input box after generation finishes (with a small timeout to let the DOM re-enable it first)
   useEffect(() => {
     if (!isGenerating) {
-      inputRef.current?.focus();
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
     }
   }, [isGenerating]);
+
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsGenerating(false);
+    }
+  };
+
+  const handleResetChat = () => {
+    setChatHistory([
+      {
+        sender: 'PACC',
+        content: 'System operational. All nodes reporting healthy. Maverick Core is online and awaiting instructions.',
+      },
+    ]);
+  };
 
   // Boot sequence transition effect
   useEffect(() => {
@@ -274,6 +295,9 @@ export default function App() {
       },
     ]);
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       await sendMessageStream(
         userPrompt,
@@ -297,23 +321,29 @@ export default function App() {
           });
         },
         editorFilePath,
-        isDirMode ? "" : editorContent
+        isDirMode ? "" : editorContent,
+        controller.signal
       );
     } catch (err: any) {
-      console.error(err);
-      setChatHistory(prev => {
-        const next = [...prev];
-        const lastMsg = next[next.length - 1];
-        if (lastMsg && lastMsg.sender === 'PACC') {
-          lastMsg.error = err.message || 'Unknown network error';
-          if (!lastMsg.content) {
-            lastMsg.content = 'Failed to execute query. Check backend logs.';
+      if (err.name === 'AbortError') {
+        console.log('Generation aborted by user');
+      } else {
+        console.error(err);
+        setChatHistory(prev => {
+          const next = [...prev];
+          const lastMsg = next[next.length - 1];
+          if (lastMsg && lastMsg.sender === 'PACC') {
+            lastMsg.error = err.message || 'Unknown network error';
+            if (!lastMsg.content) {
+              lastMsg.content = 'Failed to execute query. Check backend logs.';
+            }
           }
-        }
-        return next;
-      });
+          return next;
+        });
+      }
     } finally {
       setIsGenerating(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -373,6 +403,12 @@ export default function App() {
             <span>MAVERICK CORE STATUS: ONLINE</span>
           </div>
           <span className="text-white font-black text-base">{currentTime || '12:00:00 UTC'}</span>
+          <button
+            onClick={handleResetChat}
+            className="px-2 py-1 bg-mav-dark border border-mav-blue/40 text-mav-chrome hover:text-white hover:border-mav-blue transition-all duration-150 text-[10px] font-black"
+          >
+            [ RESET_SESSION ]
+          </button>
         </div>
       </header>
 
@@ -422,25 +458,26 @@ export default function App() {
 
             {/* TAB CONTENT: SKILLS */}
             {activeTab === 'skills' && (
-              <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1">
+              <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto pr-1">
                 <h3 className="text-sm font-black text-white border-b border-mav-blue/30 pb-1">AUTHORIZED_SKILLS</h3>
-                {skills.map(skill => {
-                  const isAuthorized = activeAgent?.authorized_skills?.includes(skill.skill_id);
-                  const status = isAuthorized ? (isGenerating ? 'executing' : 'ready') : 'locked';
-                  return (
-                    <div key={skill.skill_id} className="flex flex-col gap-1 text-sm p-3 bg-mav-dark border border-mav-blue/50">
-                      <div className="flex items-center justify-between">
-                        <span className="font-black text-white">{skill.skill_id.toUpperCase()}</span>
-                        <span className={`uppercase font-black text-sm ${status === 'ready' ? 'text-mav-blue' : status === 'executing' ? 'text-neon-green animate-pulse' : 'text-mav-alert'}`}>
-                          [{status}]
-                        </span>
+                {skills
+                  .filter(skill => activeAgent?.authorized_skills?.includes(skill.skill_id))
+                  .map(skill => {
+                    const status = isGenerating ? 'executing' : 'ready';
+                    return (
+                      <div key={skill.skill_id} className="flex flex-col gap-0.5 text-xs p-1.5 bg-mav-dark border border-mav-blue/50">
+                        <div className="flex items-center justify-between">
+                          <span className="font-black text-white">{skill.skill_id.toUpperCase()}</span>
+                          <span className={`uppercase font-black text-[10px] ${status === 'ready' ? 'text-mav-blue' : 'text-neon-green animate-pulse'}`}>
+                            [{status}]
+                          </span>
+                        </div>
+                        <span className="text-mav-chrome font-medium text-[11px] leading-normal mt-0.5">{skill.description}</span>
                       </div>
-                      <span className="text-mav-chrome font-medium text-xs leading-normal mt-1">{skill.description}</span>
-                    </div>
-                  );
-                })}
-                {skills.length === 0 && (
-                  <div className="text-sm opacity-50 italic text-white">No skills registered.</div>
+                    );
+                  })}
+                {skills.filter(skill => activeAgent?.authorized_skills?.includes(skill.skill_id)).length === 0 && (
+                  <div className="text-xs opacity-50 italic text-white">No authorized skills for this agent.</div>
                 )}
               </div>
             )}
@@ -613,6 +650,17 @@ export default function App() {
                   >
                     [ AGENT SCREEN MONITOR ]
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('noc')}
+                    className={`flex-1 py-1 text-center text-[10px] font-black border transition-all duration-150 ${
+                      previewMode === 'noc'
+                        ? 'border-mav-blue bg-mav-blue/15 text-white'
+                        : 'border-transparent text-mav-blue/40 hover:text-white hover:bg-mav-blue/5'
+                    }`}
+                  >
+                    [ NOC DASHBOARD ]
+                  </button>
                 </div>
 
                 {previewMode === 'web' ? (
@@ -668,7 +716,7 @@ export default function App() {
                       * Note: Local HTML paths (e.g. C:\path\to\landing.html) are rendered automatically via Gateway preview.
                     </div>
                   </div>
-                ) : (
+                ) : previewMode === 'monitor' ? (
                   <div className="flex-1 flex flex-col gap-2 overflow-hidden">
                     <div className="text-[11px] text-white font-bold border-b border-mav-blue/30 pb-1 mb-1">
                       &gt; BROWSER AGENT ACTIVITY MONITOR...
@@ -686,6 +734,21 @@ export default function App() {
                     </div>
                     <div className="text-[10px] text-neon-green/80 italic leading-snug">
                       * Displaying live-updating viewport screenshot of the running browser subagent (refreshes every 2s).
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col gap-2 overflow-hidden">
+                    <div className="text-[11px] text-white font-bold border-b border-mav-blue/30 pb-1 mb-1 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-neon-green rounded-full animate-pulse" />
+                      &gt; HOMELAB NOC DASHBOARD LINKED...
+                    </div>
+                    {/* NOC iframe viewport */}
+                    <div className="flex-1 border border-mav-blue/40 bg-mav-black relative mt-1 overflow-hidden">
+                      <iframe
+                        src="http://localhost:3010"
+                        className="w-full h-full border-none"
+                        title="Homelab NOC Dashboard"
+                      />
                     </div>
                   </div>
                 )}
@@ -733,15 +796,24 @@ export default function App() {
           {/* Command Palette */}
           <form onSubmit={handleSubmit} className="clipped-panel h-16 p-2 flex items-center gap-3 shadow-glow-mav">
             <span className="text-mav-blue font-bold pl-2">CMD &gt;</span>
-            <input 
+            <input
               ref={inputRef}
-              type="text" 
+              type="text"
               className="bg-transparent border-none outline-none flex-1 text-mav-chrome placeholder-mav-blue/30"
               placeholder={isGenerating ? 'Awaiting response stream...' : 'Enter command or ask active agent...'}
               value={input}
               disabled={isGenerating}
               onChange={(e) => setInput(e.target.value)}
             />
+            {isGenerating && (
+              <button
+                type="button"
+                onClick={handleStopGeneration}
+                className="px-3 py-1 bg-mav-alert/20 border border-mav-alert text-mav-alert font-black text-xs hover:bg-mav-alert hover:text-white transition-all duration-150"
+              >
+                [ STOP_GEN ]
+              </button>
+            )}
           </form>
         </section>
 
