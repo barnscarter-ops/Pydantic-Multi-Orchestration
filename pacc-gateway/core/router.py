@@ -8,6 +8,7 @@ from core.base_provider import BaseProvider
 from providers.ollama import OllamaProvider
 from providers.anthropic import AnthropicProvider
 from providers.llamacpp import LlamaCppProvider
+from providers.gemini import GeminiProvider
 from schemas.gateway import GatewayRequest, GatewayResponse, AgentManifest
 
 # Setup logging
@@ -38,8 +39,15 @@ class ModelRouter:
                 api_key=env_vars.get("LLAMACPP_API_KEY", "local")
             ),
             "anthropic": AnthropicProvider(api_key=env_vars.get("ANTHROPIC_API_KEY")),
-            # OpenAI and Google would be added here
         }
+
+        try:
+            self.providers["gemini"] = GeminiProvider(
+                api_key=env_vars.get('GEMINI_API_KEY', ''),
+                base_url=env_vars.get('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/openai')
+            )
+        except ValueError as e:
+            logger.warning(f"GeminiProvider initialization failed: {e}. Gemini will not be available.")
 
     async def _fetch_manifest(self, agent_id: str) -> Optional[AgentManifest]:
         """Fetch agent policy from Registry, falling back to local_agents.json if unavailable."""
@@ -256,12 +264,12 @@ class ModelRouter:
 
     def _get_provider_for_model(self, model_name: str) -> str:
         """Maps a model name to its provider key."""
+        if "gemini" in model_name.lower():
+            return "gemini"
         if "claude" in model_name.lower():
             return "anthropic"
         if "gpt" in model_name.lower():
             return "openai"
-        if "gemini" in model_name.lower():
-            return "google"
         if model_name.lower().startswith("llamacpp/") or model_name.lower().endswith(".gguf"):
             return "llamacpp"
         return "ollama"

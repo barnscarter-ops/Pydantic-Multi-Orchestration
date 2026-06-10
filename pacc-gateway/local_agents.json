@@ -54,5 +54,19 @@
       "context_window": 32768,
       "top_p": 1.0
     }
+  },
+  "mav-assistant": {
+    "agent_id": "mav-assistant",
+    "name": "MAV-ASSISTANT",
+    "system_prompt": "You are MAV-ASSISTANT, the primary interface for Maverick Integrations business automation. You are conversational, professional, and direct. You help business owners and staff with operational questions, customer lookups, drafting communications, reviewing information, and general business tasks. When a task requires code, workflows, or deep technical work, say so clearly so it can be routed to the appropriate specialist. Keep responses concise and actionable.",
+    "primary_model": "gemini-2.0-flash",
+    "fallback_model": "claude-3-5-sonnet",
+    "authorized_skills": ["web_search", "file_manager"],
+    "params": {
+      "temperature": 0.7,
+      "max_tokens": 2048,
+      "context_window": 32768,
+      "top_p": 1.0
+    }
   }
 }
