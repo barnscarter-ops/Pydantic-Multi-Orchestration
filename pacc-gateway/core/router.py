@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from core.base_provider import BaseProvider
 from providers.ollama import OllamaProvider
 from providers.anthropic import AnthropicProvider
+from providers.llamacpp import LlamaCppProvider
 from schemas.gateway import GatewayRequest, GatewayResponse, AgentManifest
 
 # Setup logging
@@ -20,6 +21,10 @@ class ModelRouter:
         # Initialize providers
         self.providers: Dict[str, BaseProvider] = {
             "ollama": OllamaProvider(base_url=env_vars.get("OLLAMA_BASE_URL", "http://localhost:11434")),
+            "llamacpp": LlamaCppProvider(
+                base_url=env_vars.get("LLAMACPP_BASE_URL", "http://localhost:8080/v1"),
+                api_key=env_vars.get("LLAMACPP_API_KEY", "local")
+            ),
             "anthropic": AnthropicProvider(api_key=env_vars.get("ANTHROPIC_API_KEY")),
             # OpenAI and Google would be added here
         }
@@ -238,4 +243,6 @@ class ModelRouter:
             return "openai"
         if "gemini" in model_name.lower():
             return "google"
+        if model_name.lower().startswith("llamacpp/") or model_name.lower().endswith(".gguf"):
+            return "llamacpp"
         return "ollama"

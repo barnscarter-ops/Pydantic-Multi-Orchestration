@@ -7,6 +7,7 @@ import os
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from schemas.gateway import GatewayRequest, GatewayResponse, FileSaveRequest
 from core.router import ModelRouter
@@ -29,6 +30,25 @@ app.add_middleware(
 # The Gateway now points to the Registry (Brain) on the Proxmox Server
 REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://<PROXMOX_IP>:8001")
 router = ModelRouter(registry_url=REGISTRY_URL, env_vars=os.environ)
+
+EDITOR_ROOTS = [
+    Path(root.strip()).resolve()
+    for root in os.environ.get("EDITOR_ROOTS", r"C:\Users\carte\pacc-gateway").split(";")
+    if root.strip()
+]
+
+
+def resolve_editor_path(path: str, *, must_exist: bool = False) -> Path:
+    """Resolve and validate paths exposed through the command-center editor API."""
+    candidate = Path(path).resolve()
+    if must_exist and not candidate.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    if not any(candidate == root or root in candidate.parents for root in EDITOR_ROOTS):
+        allowed = "; ".join(str(root) for root in EDITOR_ROOTS)
+        raise HTTPException(status_code=403, detail=f"Path is outside allowed editor roots: {allowed}")
+
+    return candidate
 
 @app.get("/health")
 async def health_check():
@@ -63,38 +83,36 @@ async def read_file(path: str):
     """Reads a local file and returns its content or lists directory contents."""
     if not path:
         raise HTTPException(status_code=400, detail="Path parameter is required")
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    target = resolve_editor_path(path, must_exist=True)
     try:
-        if os.path.isdir(path):
+        if target.is_dir():
             files = []
-            for item in os.listdir(path):
-                full_item = os.path.join(path, item)
+            for item in os.listdir(target):
+                full_item = target / item
                 files.append({
                     "name": item,
-                    "is_dir": os.path.isdir(full_item),
-                    "path": os.path.abspath(full_item)
+                    "is_dir": full_item.is_dir(),
+                    "path": str(full_item)
                 })
             # Sort directories first, then files alphabetically
             files.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
-            return {"path": os.path.abspath(path), "is_directory": True, "files": files}
+            return {"path": str(target), "is_directory": True, "files": files}
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
-        return {"path": os.path.abspath(path), "is_directory": False, "content": content}
+        return {"path": str(target), "is_directory": False, "content": content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
 
 @app.post("/file")
 async def write_file(request: FileSaveRequest):
     """Writes content to a local file path."""
+    target = resolve_editor_path(request.path)
     try:
-        directory = os.path.dirname(request.path)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
-        with open(request.path, "w", encoding="utf-8") as f:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
             f.write(request.content)
-        return {"status": "success", "path": request.path}
+        return {"status": "success", "path": str(target)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write file: {str(e)}")
 
@@ -103,10 +121,9 @@ async def preview_file(path: str):
     """Renders a local HTML landing page file in the browser preview iframe."""
     if not path:
         raise HTTPException(status_code=400, detail="Path parameter is required")
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    target = resolve_editor_path(path, must_exist=True)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(target, "r", encoding="utf-8") as f:
             content = f.read()
         return content
     except Exception as e:

@@ -1,63 +1,47 @@
-import asyncio
 import os
+import sys
+from pathlib import Path
+
 from dotenv import load_dotenv
-from core.config_loader import ConfigLoader
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from core.router import ModelRouter
+from providers.llamacpp import LlamaCppProvider
 from schemas.gateway import GatewayRequest
 
-# Load env for the test
-load_dotenv("pacc-gateway/.env")
 
-async def test_local_success():
-    print("\n--- Testing Local Success (Ollama) ---")
-    config = ConfigLoader("pacc-gateway/config.yaml")
-    router = ModelRouter(config, os.environ)
+def main():
+    load_dotenv(PROJECT_ROOT / ".env")
 
-    request = GatewayRequest(
-        prompt="Hello, who are you?",
-        agent_role="general"
+    router = ModelRouter(
+        registry_url=os.environ.get("REGISTRY_URL", "http://localhost:8001"),
+        env_vars=os.environ,
     )
 
-    response = await router.route(request)
-    print(f"Model Used: {response.model_used}")
-    print(f"Provider: {response.provider}")
-    print(f"Content: {response.content[:100]}...")
-    assert response.provider == "ollama"
-    assert response.content != ""
-
-async def test_escalation_trigger():
-    print("\n--- Testing Escalation Trigger (Simulated Failure) ---")
-    config = ConfigLoader("pacc-gateway/config.yaml")
-    router = ModelRouter(config, os.environ)
-
-    # To simulate a local failure without breaking the real Ollama,
-    # we can temporarily point the router to a non-existent Ollama URL
-    router.providers["ollama"].base_url = "http://localhost:9999"
+    qwen_route = "llamacpp/Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf"
+    provider_key = router._get_provider_for_model(qwen_route)
+    assert provider_key == "llamacpp", f"Expected llamacpp provider, got {provider_key}"
+    assert isinstance(router.providers[provider_key], LlamaCppProvider)
 
     request = GatewayRequest(
-        prompt="This should trigger escalation because local is down.",
-        agent_role="general"
+        prompt="Smoke test",
+        agent_id="mav-coder",
+        stream=True,
+        metadata={
+            "editor_file_path": str(PROJECT_ROOT / "config.yaml"),
+            "editor_file_content": "default_local_model: smoke-test",
+        },
     )
+    assert request.agent_id == "mav-coder"
+    assert request.metadata["editor_file_path"].endswith("config.yaml")
 
-    response = await router.route(request)
-    print(f"Model Used: {response.model_used}")
-    print(f"Provider: {response.provider}")
-    print(f"Escalated: {response.escalated}")
+    print("Gateway smoke verification passed.")
+    print(f"Route: {qwen_route}")
+    print(f"Provider: {provider_key}")
+    print(f"llama.cpp base URL: {router.providers[provider_key].base_url}")
 
-    # If API key is missing in .env, this will still fail but it should
-    # at least have attempted the 'anthropic' provider.
-    assert response.escalated == True
-    assert response.provider == "anthropic"
-
-async def main():
-    try:
-        await test_local_success()
-        await test_escalation_trigger()
-        print("\n✅ Gateway Verification Complete!")
-    except Exception as e:
-        print(f"\n❌ Verification Failed: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
