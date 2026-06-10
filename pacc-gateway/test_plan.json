@@ -1,0 +1,20 @@
+{
+  "task": "Build a gateway health check module with a /status endpoint and a test suite",
+  "reasoning": "The gateway needs a richer /status endpoint beyond the basic /health check. It should report llama.cpp connectivity, uptime, and loaded model. We also need a test file that verifies the endpoint response shape. Both files go into pe_output so nothing in the main codebase is touched.",
+  "steps": [
+    {
+      "id": 1,
+      "action": "create_file",
+      "file": "gateway_status.py",
+      "instruction": "Write a FastAPI router module called gateway_status.py. It should:\n1. Import APIRouter from fastapi, httpx, time, os\n2. Create a router = APIRouter()\n3. Store a module-level START_TIME = time.time() when the module loads\n4. Define GET /status endpoint that returns a JSON dict with keys:\n   - status: 'ok' or 'degraded'\n   - uptime_seconds: int (current time minus START_TIME)\n   - llamacpp: dict with keys 'reachable' (bool) and 'model' (str or null) — check http://127.0.0.1:8080/v1/models with a 3 second timeout\n   - gateway_version: '1.0.0'\n5. If llamacpp is unreachable, status becomes 'degraded'\n6. Use async def, handle httpx exceptions gracefully",
+      "context_files": []
+    },
+    {
+      "id": 2,
+      "action": "create_file",
+      "file": "test_gateway_status.py",
+      "instruction": "Write a pytest test file for gateway_status.py. It should:\n1. Import pytest, pytest-asyncio, AsyncClient from httpx, and the FastAPI app\n2. Create a minimal FastAPI app that includes the gateway_status router\n3. Write two tests using httpx.AsyncClient with app as transport:\n   - test_status_endpoint_shape: calls GET /status, asserts 200, asserts response JSON has keys: status, uptime_seconds, llamacpp, gateway_version\n   - test_llamacpp_field_shape: asserts response['llamacpp'] has keys 'reachable' and 'model'\n4. Use @pytest.mark.anyio or @pytest.mark.asyncio decorator on async tests\n5. Keep it simple — do not mock httpx, let it hit the real endpoint (tests assume llama.cpp may or may not be running)",
+      "context_files": ["pe_output/gateway_status.py"]
+    }
+  ]
+}
