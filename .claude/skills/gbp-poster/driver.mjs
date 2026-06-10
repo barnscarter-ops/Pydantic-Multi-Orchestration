@@ -6,6 +6,7 @@ import os from 'os';
 
 const DEFAULT_CONFIG = 'C:\\Users\\carte\\.codex\\plugins\\grizzly-gbp-poster\\config.local.json';
 const USER_DATA_DIR = path.join(os.homedir(), '.claude', 'gbp-session');
+const VIEWPORT = { width: 1365, height: 900 };
 
 function parseArgs(argv) {
     const args = { dryRun: false, auth: false, headless: false, date: null, config: DEFAULT_CONFIG };
@@ -72,23 +73,25 @@ async function clickFirst(page, selectors, label) {
     throw new Error(`Could not find ${label}. Tried: ${selectors.join(', ')}`);
 }
 
-async function fillFirst(page, selectors, value, label) {
-    for (const selector of selectors) {
-        const locator = page.locator(selector).first();
-        if (await locator.count()) {
-            await locator.fill(value, { timeout: 10000 });
-            return selector;
-        }
+async function assertLoggedIn(page) {
+    if (/accounts\.google\.com/.test(page.url())) {
+        throw new Error('GBP session expired (redirected to Google sign-in). Re-authenticate with: node driver.mjs --auth');
     }
-    throw new Error(`Could not find ${label}. Tried: ${selectors.join(', ')}`);
+    const signIn = page.locator('a:has-text("Sign in"), button:has-text("Sign in")').first();
+    if (await signIn.isVisible({ timeout: 1000 }).catch(() => false)) {
+        throw new Error('GBP session is logged out (Sign in button visible). Re-authenticate with: node driver.mjs --auth');
+    }
 }
 
 async function openUpdateComposer(page) {
     await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+    await assertLoggedIn(page);
 
     const directAddUpdate = page.locator('button:has-text("Add update")').first();
+    const postsButton = page.locator('button:has-text("Posts"), text="Posts"').first();
+    await directAddUpdate.or(postsButton).first().waitFor({ timeout: 20000 });
+
     if (await directAddUpdate.count()) {
         await directAddUpdate.scrollIntoViewIfNeeded({ timeout: 10000 });
         await directAddUpdate.click({ timeout: 10000 });
@@ -97,64 +100,97 @@ async function openUpdateComposer(page) {
             'button:has-text("Posts")',
             'text="Posts"',
         ], 'posts button');
-        await page.waitForTimeout(3000);
-        await clickFirst(page, [
-            'button:has-text("Add post")',
-            'div[role="button"]:has-text("Add a post")',
-            'button:has-text("Add update")',
-            'text="Add post"',
-        ], 'add post button');
+        const addPost = page.locator(
+            'button:has-text("Add post"), div[role="button"]:has-text("Add a post"), button:has-text("Add update")'
+        ).first();
+        await addPost.waitFor({ timeout: 15000 });
+        await addPost.click({ timeout: 10000 });
     }
 
-    await page.waitForURL(/promote\/updates\/add|#mpd=.*updates\/add/, { timeout: 15000 }).catch(() => {});
-    await page.locator('text="Add post"').first().waitFor({ timeout: 15000 }).catch(() => {});
+    // Composer is ready when the description surface exists.
+    await composerInput(page).waitFor({ timeout: 20000 });
+}
+
+function composerInput(page) {
+    return page.locator('div[role="dialog"] [contenteditable="true"], div[role="dialog"] textarea, [contenteditable="true"], textarea').first();
 }
 
 async function attachImage(page, imagePath) {
     const existingInput = page.locator('input[type="file"]').first();
     if (await existingInput.count()) {
         await existingInput.setInputFiles(imagePath, { timeout: 15000 });
-        await page.waitForTimeout(3000);
-        return;
-    }
-    const chooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
-    const selectText = page.getByText('Select images and videos', { exact: true }).first();
-    if (await selectText.count()) {
-        await selectText.click({ timeout: 10000 });
     } else {
-        await page.mouse.click(795, 355);
+        const selectText = page.getByText('Select images and videos', { exact: true }).first();
+        await selectText.waitFor({ timeout: 15000 });
+        const chooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
+        await selectText.click({ timeout: 10000 });
+        const chooser = await chooserPromise;
+        await chooser.setFiles(imagePath);
     }
-    const chooser = await chooserPromise;
-    await chooser.setFiles(imagePath);
-    await page.waitForTimeout(3000);
+    // Wait for the upload to render a thumbnail instead of sleeping blind.
+    await page.locator('div[role="dialog"] img, img[src^="blob:"], img[src^="data:"]').first()
+        .waitFor({ timeout: 30000 })
+        .catch(() => {});
+    await page.waitForTimeout(1500);
 }
 
 async function fillComposerDescription(page, value) {
-    const descriptionText = page.getByText('Description', { exact: true }).first();
-    if (await descriptionText.count()) {
-        await descriptionText.click({ timeout: 10000 });
-    } else {
-        await page.mouse.click(360, 230);
-    }
+    const input = composerInput(page);
+    await input.waitFor({ timeout: 15000 });
+    await input.click({ timeout: 10000 });
     await page.keyboard.press('Control+A').catch(() => {});
     await page.keyboard.insertText(value);
-    await page.waitForTimeout(500);
+    // Confirm the text actually landed.
+    const typed = (await input.innerText().catch(() => '')) || (await input.inputValue().catch(() => ''));
+    if (!typed || !typed.includes(value.slice(0, 30))) {
+        throw new Error('Caption text did not register in the composer description field.');
+    }
 }
 
 async function clickComposerPost(page) {
-    const clicked = await page.evaluate(() => {
-        const candidates = [...document.querySelectorAll('button')]
-            .map((button) => ({ button, rect: button.getBoundingClientRect(), text: (button.innerText || button.textContent || '').trim() }))
-            .filter(({ rect, text }) => text === 'Post' && rect.width > 0 && rect.height > 0 && rect.x > 500 && rect.y > 300);
-        const target = candidates.sort((a, b) => b.rect.y - a.rect.y)[0]?.button;
-        if (!target) return false;
-        target.click();
-        return true;
-    });
-    if (!clicked) {
-        await page.mouse.click(935, 680);
+    const dialog = page.locator('div[role="dialog"]').last();
+    let postButton = dialog.getByRole('button', { name: 'Post', exact: true }).last();
+    if (!(await postButton.count())) {
+        postButton = page.getByRole('button', { name: 'Post', exact: true }).last();
     }
-    await page.waitForTimeout(5000);
+    if (!(await postButton.count())) {
+        throw new Error('Could not find the Post submit button in the composer.');
+    }
+    await postButton.click({ timeout: 10000 });
+
+    // The composer closing is the signal that GBP accepted the submission.
+    await composerInput(page).waitFor({ state: 'hidden', timeout: 30000 });
+
+    const errorBanner = page.locator('text=/something went wrong|couldn’t be posted|could not be posted|try again/i').first();
+    if (await errorBanner.isVisible({ timeout: 1000 }).catch(() => false)) {
+        throw new Error(`GBP showed an error after submitting: ${(await errorBanner.innerText().catch(() => '')).trim()}`);
+    }
+}
+
+function captionSnippet(caption) {
+    const firstLine = caption.split('\n').map((line) => line.trim()).find(Boolean) || caption;
+    return firstLine.replace(/\s+/g, ' ').slice(0, 60).trim();
+}
+
+async function verifyPosted(page, caption) {
+    const snippet = captionSnippet(caption);
+    await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    const postsButton = page.locator('button:has-text("Posts"), text="Posts"').first();
+    if (await postsButton.count()) {
+        await postsButton.click({ timeout: 10000 }).catch(() => {});
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    }
+    const match = page.getByText(snippet, { exact: false }).first();
+    const visible = await match.isVisible({ timeout: 15000 }).catch(() => false);
+    if (!visible) return { verified: false, postUrl: null };
+
+    // Best-effort: pull a canonical post link near the matched card if one exists.
+    const postUrl = await page.evaluate(() => {
+        const anchor = [...document.querySelectorAll('a[href*="localPost"], a[href*="/posts/"]')][0];
+        return anchor ? anchor.href : null;
+    }).catch(() => null);
+    return { verified: true, postUrl };
 }
 
 async function saveFailureArtifacts(page) {
@@ -173,6 +209,10 @@ async function saveFailureArtifacts(page) {
     return { screenshot, textFile };
 }
 
+function emitResult(result) {
+    console.log(JSON.stringify(result));
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
 
@@ -181,7 +221,7 @@ async function main() {
     if (args.auth) {
         const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
             headless: false,
-            viewport: { width: 1365, height: 900 },
+            viewport: VIEWPORT,
         });
         const page = await context.newPage();
         console.log('AUTH MODE: Log into Google Business Profile, then close this browser window.');
@@ -220,11 +260,14 @@ async function main() {
     };
     console.log(JSON.stringify({ mode: args.dryRun ? 'dry-run' : 'live', payload: preview }, null, 2));
 
-    if (args.dryRun) return;
+    if (args.dryRun) {
+        emitResult({ result: 'dry_run', date: payload.date, verified: false, postUrl: null });
+        return;
+    }
 
     const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
         headless: args.headless,
-        viewport: { width: 1280, height: 800 }
+        viewport: VIEWPORT,
     });
     const page = await context.newPage();
 
@@ -235,9 +278,17 @@ async function main() {
             await attachImage(page, payload.imagePath);
         }
         await clickComposerPost(page);
-        console.log('Post successfully submitted to GBP.');
+        const { verified, postUrl } = await verifyPosted(page, payload.caption);
+        emitResult({ result: 'posted', date: payload.date, verified, postUrl });
+        if (verified) {
+            console.log('Post submitted and verified on GBP.');
+        } else {
+            console.error('Post was submitted (composer closed cleanly) but could not be verified in the Posts list. Check GBP manually before retrying — retrying may create a duplicate.');
+            process.exitCode = 3;
+        }
     } catch (e) {
         const artifacts = await saveFailureArtifacts(page);
+        emitResult({ result: 'failed', date: payload.date, verified: false, postUrl: null, error: String(e.message || e) });
         console.error('Error during GBP posting:', e.message || e);
         console.error(`Debug artifacts: ${JSON.stringify(artifacts)}`);
         process.exitCode = 1;
