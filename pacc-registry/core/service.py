@@ -74,13 +74,19 @@ class RegistryService:
 
     @staticmethod
     def create_skill(db: Session, skill_id: str, description: str, exec_command: str, args_schema: dict):
-        skill = SkillModel(
-            skill_id=skill_id,
-            description=description,
-            exec_command=exec_command,
-            args_schema=args_schema
-        )
-        db.add(skill)
+        skill = db.query(SkillModel).filter(SkillModel.skill_id == skill_id).first()
+        if skill:
+            skill.description = description
+            skill.exec_command = exec_command
+            skill.args_schema = args_schema
+        else:
+            skill = SkillModel(
+                skill_id=skill_id,
+                description=description,
+                exec_command=exec_command,
+                args_schema=args_schema
+            )
+            db.add(skill)
         db.commit()
         db.refresh(skill)
         return skill
