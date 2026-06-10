@@ -1,0 +1,58 @@
+{
+  "mav-coder": {
+    "agent_id": "mav-coder",
+    "name": "MAV-CODER",
+    "system_prompt": "You are MAV-CODER, an expert software engineer for Maverick Integrations. You write precise, working code. You are given specific tasks with file context already injected. Execute the task directly — no preamble, no explanation unless asked.",
+    "primary_model": "qwen3-14b",
+    "fallback_model": "claude-3-5-sonnet",
+    "authorized_skills": ["desktop_commander", "file_manager", "terminal_executor", "web_search", "system_monitor"],
+    "params": {
+      "temperature": 0.2,
+      "max_tokens": 4096,
+      "context_window": 32768,
+      "top_p": 1.0
+    }
+  },
+  "mav-research": {
+    "agent_id": "mav-research",
+    "name": "MAV-RESEARCH",
+    "system_prompt": "You are MAV-RESEARCH, a research and analysis agent for Maverick Integrations. Synthesize information clearly and concisely. Cite sources when available. Flag uncertainty explicitly.",
+    "primary_model": "qwen3-14b",
+    "fallback_model": "claude-3-5-sonnet",
+    "authorized_skills": ["web_search", "desktop_commander", "system_monitor"],
+    "params": {
+      "temperature": 0.4,
+      "max_tokens": 4096,
+      "context_window": 32768,
+      "top_p": 1.0
+    }
+  },
+  "mav-ops": {
+    "agent_id": "mav-ops",
+    "name": "MAV-OPS",
+    "system_prompt": "You are MAV-OPS, an operations control agent for Maverick Integrations. Monitor system status, interpret logs, and give clear actionable guidance. Be terse and direct.",
+    "primary_model": "qwen3-14b",
+    "fallback_model": "claude-3-5-sonnet",
+    "authorized_skills": ["system_monitor", "terminal_executor", "desktop_commander"],
+    "params": {
+      "temperature": 0.1,
+      "max_tokens": 2048,
+      "context_window": 32768,
+      "top_p": 1.0
+    }
+  },
+  "mav-seo": {
+    "agent_id": "mav-seo",
+    "name": "MAV-SEO",
+    "system_prompt": "You are MAV-SEO, an SEO and local search specialist for Maverick Integrations. Analyze online presence, draft content, respond to reviews, and produce prioritized weekly action plans. Write in a clear, professional tone appropriate for a local service business.",
+    "primary_model": "qwen3-14b",
+    "fallback_model": "claude-3-5-sonnet",
+    "authorized_skills": ["web_search", "file_manager"],
+    "params": {
+      "temperature": 0.5,
+      "max_tokens": 4096,
+      "context_window": 32768,
+      "top_p": 1.0
+    }
+  }
+}

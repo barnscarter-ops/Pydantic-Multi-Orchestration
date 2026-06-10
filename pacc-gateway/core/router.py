@@ -1,6 +1,8 @@
+import json
 import logging
 import httpx
 import time
+from pathlib import Path
 from typing import Dict, Any, Optional
 from core.base_provider import BaseProvider
 from providers.ollama import OllamaProvider
@@ -18,6 +20,16 @@ class ModelRouter:
     def __init__(self, registry_url: str, env_vars: Dict[str, str]):
         self.registry_url = registry_url.rstrip('/')
 
+        local_agents_path = env_vars.get("LOCAL_AGENTS_FILE", str(Path(__file__).resolve().parents[1] / "local_agents.json"))
+        self._local_agents: Dict[str, AgentManifest] = {}
+        if local_agents_path:
+            try:
+                data = json.loads(Path(local_agents_path).read_text(encoding="utf-8"))
+                self._local_agents = {k: AgentManifest(**v) for k, v in data.items()}
+                logger.info(f"Loaded {len(self._local_agents)} local agent(s) from {local_agents_path}")
+            except Exception as e:
+                logger.warning(f"Could not load local agents file at {local_agents_path}: {e}")
+
         # Initialize providers
         self.providers: Dict[str, BaseProvider] = {
             "ollama": OllamaProvider(base_url=env_vars.get("OLLAMA_BASE_URL", "http://localhost:11434")),
@@ -30,15 +42,22 @@ class ModelRouter:
         }
 
     async def _fetch_manifest(self, agent_id: str) -> Optional[AgentManifest]:
-        """The Handshake: Fetch the agent policy from the Registry (Brain)."""
+        """Fetch agent policy from Registry, falling back to local_agents.json if unavailable."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(f"{self.registry_url}/agents/{agent_id}")
                 if response.status_code == 200:
                     return AgentManifest(**response.json())
-                logger.error(f"Registry returned error {response.status_code} for agent {agent_id}")
+                logger.warning(f"Registry returned {response.status_code} for agent {agent_id}, trying local fallback")
         except Exception as e:
-            logger.error(f"Failed to connect to Registry at {self.registry_url}: {e}")
+            logger.warning(f"Registry unreachable ({e}), trying local fallback for agent {agent_id}")
+
+        manifest = self._local_agents.get(agent_id)
+        if manifest:
+            logger.info(f"Using local manifest for agent {agent_id} (model: {manifest.primary_model})")
+            return manifest
+
+        logger.error(f"No manifest found for agent {agent_id} in registry or local file")
         return None
 
     async def route(self, request: GatewayRequest) -> GatewayResponse:
