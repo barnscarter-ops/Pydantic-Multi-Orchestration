@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { fetchAgents, fetchSkills, sendMessageStream, Agent, Skill, readFile, saveFile, openFileDialog, openFolderDialog, DirectoryItem } from './services/api';
 
+const WORKFLOW_MODES = [
+  { id: 'ask',    label: '[ ASK MAVERICK ]',   agent: 'mav-assistant', tab: null },
+  { id: 'build',  label: '[ BUILD / FIX ]',     agent: 'mav-coder',     tab: 'editor' as const },
+  { id: 'review', label: '[ REVIEW & REASON ]', agent: 'mav-research',  tab: null },
+  { id: 'ops',    label: '[ OPS / DEBUG ]',     agent: 'mav-ops',       tab: null },
+] as const;
+
+type WorkflowModeId = typeof WORKFLOW_MODES[number]['id'];
+
 interface Message {
   sender: 'USER' | 'PACC';
   content: string;
@@ -16,6 +25,7 @@ export default function App() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string>('');
   const [isEscalated, setIsEscalated] = useState(false);
+  const [workflowMode, setWorkflowMode] = useState<WorkflowModeId>('ask');
   const [chatHistory, setChatHistory] = useState<Message[]>([
     {
       sender: 'PACC',
@@ -75,6 +85,12 @@ export default function App() {
     ]);
   };
 
+  const handleWorkflowSelect = (mode: typeof WORKFLOW_MODES[number]) => {
+    setWorkflowMode(mode.id);
+    setActiveAgentId(mode.agent);
+    if (mode.tab) setActiveTab(mode.tab);
+  };
+
   // Boot sequence transition effect
   useEffect(() => {
     const timer1 = setTimeout(() => setBootState('frame2'), 800);
@@ -132,8 +148,7 @@ export default function App() {
         const loadedAgents = await fetchAgents();
         setAgents(loadedAgents);
         if (loadedAgents.length > 0) {
-          // Find coder as default or use the first agent
-          const defaultAgent = loadedAgents.find(a => a.agent_id === 'mav-coder') || loadedAgents[0];
+          const defaultAgent = loadedAgents.find(a => a.agent_id === 'mav-assistant') || loadedAgents[0];
           setActiveAgentId(defaultAgent.agent_id);
         }
       } catch (e) {
@@ -791,6 +806,27 @@ export default function App() {
               ))}
               <div ref={chatEndRef} />
             </div>
+          </div>
+
+          {/* Workflow Mode Selector */}
+          <div className="clipped-panel flex gap-1 p-1.5 shadow-glow-mav">
+            {WORKFLOW_MODES.map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                disabled={isGenerating}
+                onClick={() => handleWorkflowSelect(mode)}
+                className={`flex-1 py-1.5 text-center text-[11px] font-black border transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  workflowMode === mode.id
+                    ? mode.id === 'build'
+                      ? 'border-mav-amber-glow/80 bg-mav-amber/10 text-mav-amber-glow shadow-glow-amber'
+                      : 'border-mav-blue/80 bg-mav-blue/20 text-white shadow-glow-mav'
+                    : 'border-mav-blue/25 text-mav-blue/50 hover:text-white hover:border-mav-blue/60 hover:bg-mav-blue/5'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
           </div>
 
           {/* Command Palette */}
