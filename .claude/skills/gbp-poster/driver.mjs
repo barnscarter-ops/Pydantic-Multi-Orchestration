@@ -89,17 +89,14 @@ async function openUpdateComposer(page) {
     await assertLoggedIn(page);
 
     const directAddUpdate = page.locator('button:has-text("Add update")').first();
-    const postsButton = page.locator('button:has-text("Posts"), text="Posts"').first();
+    const postsButton = page.locator('button:has-text("Posts")').first();
     await directAddUpdate.or(postsButton).first().waitFor({ timeout: 20000 });
 
     if (await directAddUpdate.count()) {
         await directAddUpdate.scrollIntoViewIfNeeded({ timeout: 10000 });
         await directAddUpdate.click({ timeout: 10000 });
     } else {
-        await clickFirst(page, [
-            'button:has-text("Posts")',
-            'text="Posts"',
-        ], 'posts button');
+        await clickFirst(page, ['button:has-text("Posts")'], 'posts button');
         const addPost = page.locator(
             'button:has-text("Add post"), div[role="button"]:has-text("Add a post"), button:has-text("Add update")'
         ).first();
@@ -107,61 +104,74 @@ async function openUpdateComposer(page) {
         await addPost.click({ timeout: 10000 });
     }
 
-    // Composer is ready when the description surface exists.
-    await composerInput(page).waitFor({ timeout: 20000 });
+    // Composer may open inside an iframe (Google Search Knowledge Panel flow) or directly.
+    // Wait for whichever appears first.
+    await Promise.race([
+        page.locator('[contenteditable="true"]').first().waitFor({ timeout: 20000 }),
+        page.frameLocator('iframe[src*="promote/updates/add"]')
+            .locator('[contenteditable="true"], textarea').first()
+            .waitFor({ timeout: 20000 }),
+    ]).catch(() => {});
 }
 
-function composerInput(page) {
-    return page.locator('div[role="dialog"] [contenteditable="true"], div[role="dialog"] textarea, [contenteditable="true"], textarea').first();
+// Returns a FrameLocator if the composer opened in an iframe, otherwise the page.
+async function getComposerCtx(page) {
+    const ifl = page.frameLocator('iframe[src*="promote/updates/add"]');
+    try {
+        await ifl.locator('[contenteditable="true"], textarea').first().waitFor({ timeout: 2000 });
+        return ifl;
+    } catch {
+        return page;
+    }
 }
 
-async function attachImage(page, imagePath) {
-    const existingInput = page.locator('input[type="file"]').first();
+function composerInput(ctx) {
+    return ctx.locator('[contenteditable="true"], textarea:not([name="q"])').first();
+}
+
+async function attachImage(ctx, imagePath, page) {
+    const existingInput = ctx.locator('input[type="file"]').first();
     if (await existingInput.count()) {
         await existingInput.setInputFiles(imagePath, { timeout: 15000 });
     } else {
-        const selectText = page.getByText('Select images and videos', { exact: true }).first();
+        const selectText = ctx.getByText('Select images and videos', { exact: true }).first();
         await selectText.waitFor({ timeout: 15000 });
+        // file chooser event must be watched on the main page
         const chooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
         await selectText.click({ timeout: 10000 });
         const chooser = await chooserPromise;
         await chooser.setFiles(imagePath);
     }
-    // Wait for the upload to render a thumbnail instead of sleeping blind.
-    await page.locator('div[role="dialog"] img, img[src^="blob:"], img[src^="data:"]').first()
+    // Wait for upload thumbnail
+    await ctx.locator('img[src^="blob:"], img[src^="data:"]').first()
         .waitFor({ timeout: 30000 })
         .catch(() => {});
     await page.waitForTimeout(1500);
 }
 
-async function fillComposerDescription(page, value) {
-    const input = composerInput(page);
+async function fillComposerDescription(ctx, value, page) {
+    const input = composerInput(ctx);
     await input.waitFor({ timeout: 15000 });
     await input.click({ timeout: 10000 });
     await page.keyboard.press('Control+A').catch(() => {});
     await page.keyboard.insertText(value);
-    // Confirm the text actually landed.
     const typed = (await input.innerText().catch(() => '')) || (await input.inputValue().catch(() => ''));
     if (!typed || !typed.includes(value.slice(0, 30))) {
         throw new Error('Caption text did not register in the composer description field.');
     }
 }
 
-async function clickComposerPost(page) {
-    const dialog = page.locator('div[role="dialog"]').last();
-    let postButton = dialog.getByRole('button', { name: 'Post', exact: true }).last();
-    if (!(await postButton.count())) {
-        postButton = page.getByRole('button', { name: 'Post', exact: true }).last();
-    }
+async function clickComposerPost(ctx, page) {
+    const postButton = ctx.getByRole('button', { name: 'Post', exact: true }).last();
     if (!(await postButton.count())) {
         throw new Error('Could not find the Post submit button in the composer.');
     }
     await postButton.click({ timeout: 10000 });
 
-    // The composer closing is the signal that GBP accepted the submission.
-    await composerInput(page).waitFor({ state: 'hidden', timeout: 30000 });
+    // Composer closing = GBP accepted submission
+    await composerInput(ctx).waitFor({ state: 'hidden', timeout: 30000 });
 
-    const errorBanner = page.locator('text=/something went wrong|couldn’t be posted|could not be posted|try again/i').first();
+    const errorBanner = ctx.locator('text=/something went wrong|couldn\'t be posted|could not be posted|try again/i').first();
     if (await errorBanner.isVisible({ timeout: 1000 }).catch(() => false)) {
         throw new Error(`GBP showed an error after submitting: ${(await errorBanner.innerText().catch(() => '')).trim()}`);
     }
@@ -174,18 +184,39 @@ function captionSnippet(caption) {
 
 async function verifyPosted(page, caption) {
     const snippet = captionSnippet(caption);
+
+    // Give GBP a moment to index the new post before reloading
+    await page.waitForTimeout(3000);
+
     await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    const postsButton = page.locator('button:has-text("Posts"), text="Posts"').first();
-    if (await postsButton.count()) {
-        await postsButton.click({ timeout: 10000 }).catch(() => {});
-        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+
+    // Posts section may be inside an iframe on the profile page
+    const postsIframe = page.frameLocator('iframe[src*="contribute"], iframe[src*="posts"], iframe[src*="local/business"]').first();
+
+    // Check main page text first (some GBP layouts show posts inline)
+    let visible = await page.getByText(snippet, { exact: false }).first()
+        .isVisible({ timeout: 5000 }).catch(() => false);
+
+    // Fall back: check inside the posts iframe
+    if (!visible) {
+        visible = await postsIframe.getByText(snippet, { exact: false }).first()
+            .isVisible({ timeout: 8000 }).catch(() => false);
     }
-    const match = page.getByText(snippet, { exact: false }).first();
-    const visible = await match.isVisible({ timeout: 15000 }).catch(() => false);
+
+    // Fall back: try clicking Posts button and re-check
+    if (!visible) {
+        const postsButton = page.locator('button:has-text("Posts")').first();
+        if (await postsButton.count()) {
+            await postsButton.click({ timeout: 5000 }).catch(() => {});
+            await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+            visible = await page.getByText(snippet, { exact: false }).first()
+                .isVisible({ timeout: 8000 }).catch(() => false);
+        }
+    }
+
     if (!visible) return { verified: false, postUrl: null };
 
-    // Best-effort: pull a canonical post link near the matched card if one exists.
     const postUrl = await page.evaluate(() => {
         const anchor = [...document.querySelectorAll('a[href*="localPost"], a[href*="/posts/"]')][0];
         return anchor ? anchor.href : null;
@@ -273,11 +304,12 @@ async function main() {
 
     try {
         await openUpdateComposer(page);
-        await fillComposerDescription(page, payload.caption);
+        const ctx = await getComposerCtx(page);
+        await fillComposerDescription(ctx, payload.caption, page);
         if (payload.imagePath) {
-            await attachImage(page, payload.imagePath);
+            await attachImage(ctx, payload.imagePath, page);
         }
-        await clickComposerPost(page);
+        await clickComposerPost(ctx, page);
         const { verified, postUrl } = await verifyPosted(page, payload.caption);
         emitResult({ result: 'posted', date: payload.date, verified, postUrl });
         if (verified) {
