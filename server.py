@@ -1,11 +1,14 @@
 """
-FastAPI server for the multi-agent dashboard.
+FastAPI server — multi-agent dashboard backend.
 
-Endpoints:
-  POST /api/run         — submit a task (multipart: text + optional image)
-  GET  /api/tokens      — current token usage per agent
-  WS   /ws/logs         — real-time event stream (JSON-encoded Event objects)
-  GET  /                — serves the React frontend
+Routes:
+  POST /api/run                    submit a task (multipart: task + optional image)
+  GET  /api/jobs                   list recent jobs
+  GET  /api/jobs/{job_id}          job status + result
+  POST /api/jobs/{job_id}/cancel   cancel a running job
+  GET  /api/tokens                 token usage from the most recent run
+  GET  /api/health                 server health check
+  WS   /ws/logs                    real-time event stream (newline-delimited JSON)
 """
 
 from __future__ import annotations
@@ -13,45 +16,47 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import uuid
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator import Event, Orchestrator, RunResult
+from orchestrator import Event, Orchestrator
 
 
 # ---------------------------------------------------------------------------
-# Global state
+# Bootstrap
 # ---------------------------------------------------------------------------
 
-orchestrator = Orchestrator(max_rounds=3)
-
-# Active WebSocket connections for log streaming
+orchestrator = Orchestrator(max_rounds=3, max_p2p_depth=2)
 _ws_clients: set[WebSocket] = set()
-# Queue for broadcasting events to all WS clients
-_broadcast_queue: asyncio.Queue = asyncio.Queue()
+
+
+def _serialize_event(event: Event) -> str:
+    data = event.data
+    if not isinstance(data, (dict, list, str, int, float, bool, type(None))):
+        data = str(data)
+    return json.dumps({
+        "timestamp": event.timestamp,
+        "agent": event.agent,
+        "type": event.event_type,
+        "data": data,
+    })
 
 
 async def _broadcaster() -> None:
-    """Background task: fan-out events from the orchestrator bus to all WS clients."""
-    q = orchestrator.bus.subscribe()
+    """Fan-out events from the orchestrator bus to all WebSocket clients."""
+    q: asyncio.Queue = asyncio.Queue()
+    orchestrator.bus.subscribe(q)
     try:
         while True:
             event: Event = await q.get()
-            payload = json.dumps({
-                "timestamp": event.timestamp,
-                "agent": event.agent,
-                "type": event.event_type,
-                "data": event.data if isinstance(event.data, (dict, list, str, int, float, bool, type(None))) else str(event.data),
-            })
+            payload = _serialize_event(event)
             dead: set[WebSocket] = set()
             for ws in list(_ws_clients):
                 try:
@@ -65,12 +70,14 @@ async def _broadcaster() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Give the bus a reference to the running loop so worker-thread emits are safe.
+    orchestrator.bus.set_loop(asyncio.get_running_loop())
     task = asyncio.create_task(_broadcaster())
     yield
     task.cancel()
 
 
-app = FastAPI(title="Multi-Agent Dashboard", lifespan=lifespan)
+app = FastAPI(title="Multi-Agent Dashboard", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,16 +88,30 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# API routes
+# Health
 # ---------------------------------------------------------------------------
 
-@app.post("/api/run")
+@app.get("/api/health")
+async def health() -> JSONResponse:
+    return JSONResponse({
+        "status": "ok",
+        "busy": orchestrator.is_busy(),
+        "ws_clients": len(_ws_clients),
+        "job_count": len(orchestrator.list_jobs()),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Job submission
+# ---------------------------------------------------------------------------
+
+@app.post("/api/run", status_code=202)
 async def run_task(
     task: str = Form(...),
     image: UploadFile | None = File(None),
 ) -> JSONResponse:
-    """Submit a task to the multi-agent system. Returns a job ID immediately."""
-    job_id = str(uuid.uuid4())[:8]
+    if not task.strip():
+        raise HTTPException(400, "task must not be empty")
 
     image_bytes: bytes | None = None
     image_media_type = "image/png"
@@ -98,33 +119,37 @@ async def run_task(
         image_bytes = await image.read()
         image_media_type = image.content_type or "image/png"
 
-    async def _run() -> None:
-        orchestrator.reset_agents()
-        result: RunResult = await orchestrator.run(task, image_bytes, image_media_type)
-        # Final summary broadcast
-        summary = {
-            "job_id": job_id,
-            "rounds": result.rounds,
-            "passed": result.passed,
-            "duration_seconds": result.duration_seconds,
-            "token_totals": result.token_totals,
-        }
-        payload = json.dumps({
-            "timestamp": 0,
-            "agent": "system",
-            "type": "summary",
-            "data": summary,
-        })
-        for ws in list(_ws_clients):
-            try:
-                await ws.send_text(payload)
-            except Exception:
-                pass
+    job = await orchestrator.submit(task.strip(), image_bytes, image_media_type)
+    return JSONResponse({"job_id": job.id, "status": job.status.value})
 
-    asyncio.create_task(_run())
 
-    return JSONResponse({"job_id": job_id, "status": "running"})
+# ---------------------------------------------------------------------------
+# Job inspection & control
+# ---------------------------------------------------------------------------
 
+@app.get("/api/jobs")
+async def list_jobs() -> JSONResponse:
+    return JSONResponse(orchestrator.list_jobs())
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job(job_id: str) -> JSONResponse:
+    job = orchestrator.get_job(job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' not found")
+    return JSONResponse(job.to_dict())
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> JSONResponse:
+    if not orchestrator.cancel_job(job_id):
+        raise HTTPException(404, f"Job '{job_id}' not found")
+    return JSONResponse({"job_id": job_id, "cancelled": True})
+
+
+# ---------------------------------------------------------------------------
+# Token summary
+# ---------------------------------------------------------------------------
 
 @app.get("/api/tokens")
 async def get_tokens() -> JSONResponse:
@@ -140,9 +165,9 @@ async def ws_logs(websocket: WebSocket) -> None:
     await websocket.accept()
     _ws_clients.add(websocket)
     try:
-        # Keep connection alive; events are pushed from _broadcaster
         while True:
-            await asyncio.sleep(30)
+            # Keep-alive ping; client messages are ignored
+            await asyncio.sleep(25)
             await websocket.send_text(json.dumps({"type": "ping"}))
     except (WebSocketDisconnect, Exception):
         pass
@@ -151,17 +176,40 @@ async def ws_logs(websocket: WebSocket) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Frontend static files
+# API index
+# ---------------------------------------------------------------------------
+
+@app.get("/api")
+async def api_index() -> JSONResponse:
+    return JSONResponse({
+        "routes": [
+            "POST /api/run",
+            "GET  /api/jobs",
+            "GET  /api/jobs/{job_id}",
+            "POST /api/jobs/{job_id}/cancel",
+            "GET  /api/tokens",
+            "GET  /api/health",
+            "WS   /ws/logs",
+        ]
+    })
+
+
+# ---------------------------------------------------------------------------
+# Frontend (optional — only mounted if built)
 # ---------------------------------------------------------------------------
 
 FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
 
 
 @app.get("/")
-async def index():
+async def index() -> Any:
     if FRONTEND_DIST.exists():
         return FileResponse(FRONTEND_DIST / "index.html")
-    return JSONResponse({"message": "Frontend not built. Run: cd frontend && npm run build"})
+    return JSONResponse({
+        "message": "Backend is running. Frontend not built yet.",
+        "hint": "cd frontend && npm install && npm run build",
+        "api": "/api",
+    })
 
 
 if FRONTEND_DIST.exists():
