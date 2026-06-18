@@ -1,0 +1,44 @@
+.agent-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--agent-color);
+  border-radius: 6px;
+  padding: 8px 10px;
+  transition: border-color 0.2s;
+}
+.agent-card.active { border-left-color: var(--agent-color); box-shadow: 0 0 6px color-mix(in srgb, var(--agent-color) 30%, transparent); }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.icon { font-size: 1rem; }
+.agent-name { font-weight: 600; font-size: 0.85rem; flex: 1; }
+
+.badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badge.idle { background: #30363d; color: var(--muted); }
+.badge.active { background: color-mix(in srgb, var(--agent-color) 20%, transparent); color: var(--agent-color); }
+.badge.done { background: #1a3a1a; color: var(--planning); }
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.usage-grid span:nth-child(even) { color: var(--text); font-family: monospace; }

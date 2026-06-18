@@ -1,0 +1,49 @@
+.task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.task-input {
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px;
+  font-size: 0.875rem;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.task-input:focus { outline: none; border-color: var(--accent); }
+
+.image-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 400;
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.btn-clear {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+}
