@@ -1,18 +1,19 @@
 """
-Orchestrator: shared message thread, P2P mention routing, job lifecycle.
+Orchestrator: multi-model pipeline with structured phases.
 
-Message structure (Anthropic API requires strict alternation):
-  user(task)  →  assistant(plan)  →  user(bridge)  →  assistant(impl)  →  …
-
-Each agent's response is stored as role="assistant".
-Bridge messages directing the next agent are role="user".
-Tool-use intermediate turns live only in the agent's local copy of messages.
+Pipeline:
+  1. DEBATE      — Sonnet and Nemotron debate until consensus (max N rounds)
+  2. BREAKDOWN   — Sonnet converts the plan into atomic chunks for Qwen
+  3. EXECUTION   — Qwen executes each chunk using tools (no reasoning)
+  4. REVIEW      — Nemotron audits; loops back to execution on FAIL
+  5. DESIGN      — (if needed) Sonnet builds prompt → Gemini generates → Nemotron approves
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import threading
 import time
 import uuid
@@ -20,7 +21,42 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
 
-from agents import Agent, TokenUsage, create_agents, parse_mentions
+from agents import (
+    BaseAgent, TokenUsage,
+    SonnetPlannerAgent, NemotronReviewAgent, QwenExecutorAgent, GeminiDesignAgent,
+    create_agents,
+)
+
+MAX_DEBATE_ROUNDS  = 4   # max Sonnet/Nemotron back-and-forth rounds
+MAX_REVIEW_LOOPS   = 2   # max times Qwen is sent back for fixes
+
+_DESIGN_KEYWORDS = {
+    "ui", "frontend", "design", "landing page", "website", "webpage",
+    "image", "video", "visual", "css", "html", "interface", "dashboard",
+    "graphic", "banner", "logo", "mockup", "wireframe", "animation",
+    "illustration", "infographic", "poster", "thumbnail",
+}
+
+
+def _needs_design(task: str) -> bool:
+    words = set(re.sub(r"[^\w\s]", " ", task.lower()).split())
+    return bool(words & _DESIGN_KEYWORDS)
+
+
+def _parse_chunks(breakdown: str) -> list[str]:
+    """Extract numbered items from a breakdown response."""
+    chunks: list[str] = []
+    current: list[str] = []
+    for line in breakdown.splitlines():
+        if re.match(r"^\s*\d+[\.\)]\s+", line):
+            if current:
+                chunks.append("\n".join(current).strip())
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        chunks.append("\n".join(current).strip())
+    return [c for c in chunks if c] or [breakdown.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -30,21 +66,16 @@ from agents import Agent, TokenUsage, create_agents, parse_mentions
 @dataclass
 class Event:
     timestamp: float
-    agent: str
+    agent:      str
     event_type: str
-    data: Any
+    data:       Any
 
 
 class EventBus:
-    """
-    Thread-safe pub/sub. emit() is called from worker threads; subscribers
-    receive events on asyncio Queues in the event-loop thread.
-    """
-
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._queues: list[asyncio.Queue] = []
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._lock:   threading.Lock               = threading.Lock()
+        self._queues: list[asyncio.Queue]          = []
+        self._loop:   asyncio.AbstractEventLoop | None = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -58,11 +89,10 @@ class EventBus:
             self._queues = [x for x in self._queues if x is not q]
 
     def emit(self, agent: str, event_type: str, data: Any) -> None:
-        """Safe to call from any thread."""
         event = Event(timestamp=time.time(), agent=agent, event_type=event_type, data=data)
         with self._lock:
             queues = list(self._queues)
-            loop = self._loop
+            loop   = self._loop
         if loop and loop.is_running():
             for q in queues:
                 loop.call_soon_threadsafe(q.put_nowait, event)
@@ -73,52 +103,61 @@ class EventBus:
 # ---------------------------------------------------------------------------
 
 class JobStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    DONE = "done"
+    PENDING   = "pending"
+    RUNNING   = "running"
+    DONE      = "done"
     CANCELLED = "cancelled"
-    FAILED = "failed"
+    FAILED    = "failed"
 
 
 @dataclass
 class JobResult:
-    plan: str = ""
-    implementation_notes: list[str] = field(default_factory=list)
-    review: str = ""
-    rounds: int = 0
-    passed: bool = False
-    token_totals: dict[str, Any] = field(default_factory=dict)
-    duration_seconds: float = 0.0
+    debate_transcript:  str              = ""
+    agreed_plan:        str              = ""
+    chunks:             list[str]        = field(default_factory=list)
+    execution_results:  list[str]        = field(default_factory=list)
+    review:             str              = ""
+    design_output:      str              = ""
+    design_review:      str              = ""
+    passed:             bool             = False
+    design_approved:    bool             = False
+    debate_rounds:      int              = 0
+    review_loops:       int              = 0
+    token_totals:       dict[str, Any]   = field(default_factory=dict)
+    duration_seconds:   float            = 0.0
 
 
 @dataclass
 class Job:
-    id: str
-    task: str
-    status: JobStatus = JobStatus.PENDING
-    result: JobResult | None = None
-    error: str | None = None
-    cancel_event: threading.Event = field(default_factory=threading.Event)
-    created_at: float = field(default_factory=time.time)
-    started_at: float | None = None
-    finished_at: float | None = None
+    id:           str
+    task:         str
+    status:       JobStatus        = JobStatus.PENDING
+    result:       JobResult | None = None
+    error:        str | None       = None
+    cancel_event: threading.Event  = field(default_factory=threading.Event)
+    created_at:   float            = field(default_factory=time.time)
+    started_at:   float | None     = None
+    finished_at:  float | None     = None
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {
-            "id": self.id,
-            "task": self.task[:300],
-            "status": self.status.value,
-            "created_at": self.created_at,
-            "started_at": self.started_at,
+            "id":          self.id,
+            "task":        self.task[:300],
+            "status":      self.status.value,
+            "created_at":  self.created_at,
+            "started_at":  self.started_at,
             "finished_at": self.finished_at,
         }
         if self.result:
             d["result"] = {
-                "plan": self.result.plan[:600],
-                "rounds": self.result.rounds,
-                "passed": self.result.passed,
-                "duration_seconds": self.result.duration_seconds,
-                "token_totals": self.result.token_totals,
+                "agreed_plan":       self.result.agreed_plan[:600],
+                "chunks_count":      len(self.result.chunks),
+                "debate_rounds":     self.result.debate_rounds,
+                "review_loops":      self.result.review_loops,
+                "passed":            self.result.passed,
+                "design_approved":   self.result.design_approved,
+                "duration_seconds":  self.result.duration_seconds,
+                "token_totals":      self.result.token_totals,
             }
         if self.error:
             d["error"] = self.error
@@ -132,23 +171,24 @@ class Job:
 class Orchestrator:
     MAX_JOBS = 50
 
-    def __init__(self, max_rounds: int = 3, max_p2p_depth: int = 2) -> None:
-        self.max_rounds = max_rounds
-        self.max_p2p_depth = max_p2p_depth
-        self.bus = EventBus()
-        self._jobs: dict[str, Job] = {}
-        self._run_lock = threading.Lock()
+    def __init__(self) -> None:
+        self.bus        = EventBus()
+        self._jobs:     dict[str, Job] = {}
+        self._run_lock  = threading.Lock()
 
     # ------------------------------------------------------------------
-    # Event helpers
+    # Helpers
     # ------------------------------------------------------------------
 
     def _emit(self, agent: str, event_type: str, data: Any) -> None:
         self.bus.emit(agent, event_type, data)
 
+    def _checkpoint(self, step: str, message: str, **extra: Any) -> None:
+        self._emit("system", "checkpoint", {"step": step, "message": message, **extra})
+
     def _make_handler(self, agent_name: str) -> Callable:
         def _h(name: str, ev: str, data: Any) -> None:
-            self.bus.emit(agent_name, ev, data)
+            self.bus.emit(name, ev, data)
         return _h
 
     # ------------------------------------------------------------------
@@ -172,7 +212,6 @@ class Orchestrator:
         return self._run_lock.locked()
 
     def token_counts(self) -> dict[str, Any]:
-        """Token usage from the most recent completed run."""
         finished = [j for j in self._jobs.values() if j.result]
         if not finished:
             return {}
@@ -180,91 +219,165 @@ class Orchestrator:
         return latest.result.token_totals  # type: ignore[union-attr]
 
     # ------------------------------------------------------------------
-    # Thread construction helpers
+    # Pipeline phases
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _user(text: str) -> dict:
-        return {"role": "user", "content": text}
-
-    @staticmethod
-    def _user_with_image(text: str, image_bytes: bytes, media_type: str) -> dict:
-        b64 = base64.standard_b64encode(image_bytes).decode()
-        return {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": text},
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": b64},
-                },
-            ],
-        }
-
-    @staticmethod
-    def _assistant(text: str) -> dict:
-        return {"role": "assistant", "content": text}
-
-    # ------------------------------------------------------------------
-    # P2P turn runner
-    # ------------------------------------------------------------------
-
-    def _run_turn(
+    def _debate(
         self,
-        thread: list[dict],
-        agents: dict[str, Agent],
-        agent_key: str,
+        task: str,
+        planner: SonnetPlannerAgent,
+        reviewer: NemotronReviewAgent,
         cancel: threading.Event,
-        depth: int = 0,
+    ) -> tuple[str, str, int]:
+        """Returns (debate_transcript, agreed_plan, rounds_used)."""
+        transcript = ""
+        agreed_plan = ""
+        sonnet_consensus = False
+        nemo_consensus   = False
+
+        for round_num in range(1, MAX_DEBATE_ROUNDS + 1):
+            self._checkpoint("debate", f"Debate round {round_num}/{MAX_DEBATE_ROUNDS}…", round=round_num)
+
+            # Sonnet's turn
+            if round_num == 1:
+                sonnet_prompt = f"TASK:\n{task}\n\nPropose a detailed implementation plan."
+            else:
+                sonnet_prompt = (
+                    f"TASK:\n{task}\n\n"
+                    f"DEBATE SO FAR:\n{transcript}\n\n"
+                    f"Respond to Nemotron's latest points and refine the plan."
+                )
+            sonnet_resp = planner.respond([{"role": "user", "content": sonnet_prompt}], cancel)
+            if cancel.is_set():
+                break
+            self._emit("SonnetPlannerAgent", "message", {"round": round_num, "text": sonnet_resp})
+            transcript += f"\n\n[Sonnet — Round {round_num}]\n{sonnet_resp}"
+            sonnet_consensus = "CONSENSUS REACHED" in sonnet_resp
+
+            # Nemotron's turn
+            nemo_prompt = (
+                f"TASK:\n{task}\n\n"
+                f"DEBATE SO FAR:\n{transcript}\n\n"
+                f"Critique and respond to Sonnet's proposal."
+            )
+            nemo_resp = reviewer.respond([{"role": "user", "content": nemo_prompt}], cancel)
+            if cancel.is_set():
+                break
+            self._emit("NemotronReviewAgent", "message", {"round": round_num, "text": nemo_resp})
+            transcript += f"\n\n[Nemotron — Round {round_num}]\n{nemo_resp}"
+            nemo_consensus = "CONSENSUS REACHED" in nemo_resp
+
+            if sonnet_consensus and nemo_consensus:
+                agreed_plan = f"{sonnet_resp}\n\n{nemo_resp}"
+                return transcript, agreed_plan, round_num
+
+        # Didn't reach explicit consensus — use last Sonnet proposal
+        agreed_plan = transcript
+        return transcript, agreed_plan, MAX_DEBATE_ROUNDS
+
+    def _breakdown(
+        self,
+        task: str,
+        agreed_plan: str,
+        planner: SonnetPlannerAgent,
+        cancel: threading.Event,
+    ) -> list[str]:
+        self._checkpoint("breakdown", "Sonnet breaking plan into execution chunks for Qwen…")
+        prompt = (
+            f"TASK:\n{task}\n\n"
+            f"AGREED PLAN:\n{agreed_plan}\n\n"
+            "Convert this plan into a numbered list of atomic execution chunks for QwenExecutorAgent.\n"
+            "Each chunk must be fully self-contained — exact file paths, exact content, exact commands.\n"
+            "No reasoning required from Qwen. Be exhaustive."
+        )
+        breakdown_text = planner.respond([{"role": "user", "content": prompt}], cancel)
+        self._emit("SonnetPlannerAgent", "message", {"text": breakdown_text})
+        chunks = _parse_chunks(breakdown_text)
+        self._checkpoint("breakdown", f"Plan broken into {len(chunks)} chunks.")
+        return chunks
+
+    def _execute(
+        self,
+        chunks: list[str],
+        executor: QwenExecutorAgent,
+        cancel: threading.Event,
+        pass_num: int = 1,
+    ) -> list[str]:
+        results: list[str] = []
+        for i, chunk in enumerate(chunks, 1):
+            if cancel.is_set():
+                break
+            self._checkpoint(
+                "execution",
+                f"Qwen executing chunk {i}/{len(chunks)} (pass {pass_num})…",
+                chunk=i,
+            )
+            result = executor.execute_chunk(chunk, cancel)
+            results.append(f"[Chunk {i}]\nInstruction: {chunk[:200]}\nResult: {result}")
+            self._emit("QwenExecutorAgent", "message", {"chunk": i, "result": result[:300]})
+        return results
+
+    def _review(
+        self,
+        task: str,
+        agreed_plan: str,
+        execution_results: list[str],
+        reviewer: NemotronReviewAgent,
+        cancel: threading.Event,
     ) -> str:
-        """
-        Call one agent with the current thread (which must end in role=user).
-        Appends the agent's response as role=assistant.
-        Handles @mentions by injecting bridge messages and recursing.
-        Returns the agent's text response.
-        """
-        agent = agents[agent_key]
-        response = agent.respond(thread, cancel=cancel)
+        self._checkpoint("review", "Nemotron reviewing implementation…")
+        prompt = (
+            f"TASK:\n{task}\n\n"
+            f"PLAN:\n{agreed_plan[:3000]}\n\n"
+            f"EXECUTION RESULTS:\n" + "\n\n".join(execution_results)[:6000] +
+            "\n\nReview the implementation against the plan. "
+            "Check correctness, completeness, and quality."
+        )
+        review = reviewer.respond([{"role": "user", "content": prompt}], cancel)
+        self._emit("NemotronReviewAgent", "message", {"text": review})
+        return review
 
-        if cancel.is_set():
-            return "[Cancelled]"
+    def _design(
+        self,
+        task: str,
+        agreed_plan: str,
+        execution_results: list[str],
+        planner: SonnetPlannerAgent,
+        designer: GeminiDesignAgent,
+        reviewer: NemotronReviewAgent,
+        cancel: threading.Event,
+    ) -> tuple[str, str]:
+        """Returns (design_output, design_review)."""
+        # Sonnet builds the Gemini prompt
+        self._checkpoint("design", "Sonnet building design prompt for Gemini…")
+        prompt_req = (
+            f"TASK:\n{task}\n\n"
+            f"IMPLEMENTATION SUMMARY:\n" + "\n".join(r[:200] for r in execution_results[:5]) +
+            "\n\nBuild a detailed design generation prompt for Gemini. "
+            "Prefix it with: GEMINI PROMPT:"
+        )
+        prompt_resp = planner.respond([{"role": "user", "content": prompt_req}], cancel)
+        self._emit("SonnetPlannerAgent", "message", {"text": prompt_resp})
 
-        # Agent response goes in as assistant turn — maintains alternation
-        thread.append(self._assistant(response))
-        self._emit(agent.name, "message", {"agent": agent.name, "text": response})
+        gemini_prompt = prompt_resp
+        if "GEMINI PROMPT:" in prompt_resp:
+            gemini_prompt = prompt_resp.split("GEMINI PROMPT:", 1)[1].strip()
 
-        # P2P: handle @mentions up to max_p2p_depth
-        if depth < self.max_p2p_depth:
-            for mentioned_name in parse_mentions(response):
-                target_key = next(
-                    (k for k, a in agents.items() if a.name == mentioned_name),
-                    None,
-                )
-                if not target_key or target_key == agent_key:
-                    continue
+        # Gemini generates
+        self._checkpoint("design", "Gemini generating design output…")
+        design_output = designer.generate(gemini_prompt, cancel)
+        self._emit("GeminiDesignAgent", "message", {"text": design_output[:400]})
 
-                self._emit("system", "checkpoint", {
-                    "step": "p2p",
-                    "from": agent.name,
-                    "to": mentioned_name,
-                    "depth": depth,
-                    "message": f"P2P: {agent.name} → {mentioned_name}",
-                })
-
-                # Add a user bridge directing the mentioned agent, then recurse.
-                # After recursion the thread ends in assistant(p2p_response) — do NOT
-                # append another user message here; the caller adds the next bridge.
-                bridge = (
-                    f"[System] {agent.name} has a question or request for {mentioned_name}. "
-                    f"Please respond to their message above."
-                )
-                thread.append(self._user(bridge))
-                self._run_turn(thread, agents, target_key, cancel, depth + 1)
-
-                if cancel.is_set():
-                    return response
-
-        return response
+        # Nemotron final review
+        self._checkpoint("design", "Nemotron reviewing design output…")
+        review_prompt = (
+            f"DESIGN BRIEF:\n{gemini_prompt[:1000]}\n\n"
+            f"DESIGN OUTPUT:\n{design_output[:3000]}\n\n"
+            "Review whether this design meets the brief."
+        )
+        design_review = reviewer.respond([{"role": "user", "content": review_prompt}], cancel)
+        self._emit("NemotronReviewAgent", "message", {"text": design_review})
+        return design_output, design_review
 
     # ------------------------------------------------------------------
     # Core run (executes in thread pool)
@@ -278,113 +391,137 @@ class Orchestrator:
     ) -> None:
         if not self._run_lock.acquire(blocking=False):
             job.status = JobStatus.FAILED
-            job.error = "Another job is already running. Try again shortly."
+            job.error  = "Another job is already running. Try again shortly."
             job.finished_at = time.time()
             self._emit("system", "error", {"job_id": job.id, "message": job.error})
             return
 
         try:
-            job.status = JobStatus.RUNNING
+            job.status     = JobStatus.RUNNING
             job.started_at = time.time()
 
-            agents = create_agents()
+            agents   = create_agents()
+            planner  = agents["planner"]
+            reviewer = agents["reviewer"]
+            executor = agents["executor"]
+            designer = agents["designer"]
+
             for agent in agents.values():
                 agent.on_event = self._make_handler(agent.name)
 
             cancel = job.cancel_event
             result = JobResult()
 
-            # Build initial user message (may include an image)
-            initial_msg = (
-                self._user_with_image(job.task, image_bytes, image_media_type)
-                if image_bytes
-                else self._user(job.task)
+            # Embed image in task if provided (for Sonnet context)
+            task = job.task
+            if image_bytes:
+                b64 = base64.standard_b64encode(image_bytes).decode()
+                task += f"\n\n[Image attached: data:{image_media_type};base64,{b64[:100]}…]"
+
+            # ---- Phase 1: Debate ----------------------------------------
+            transcript, agreed_plan, debate_rounds = self._debate(
+                task, planner, reviewer, cancel
             )
-
-            # Thread always starts with the user task. _run_turn expects thread[-1].role == "user".
-            thread: list[dict] = [initial_msg]
-
-            # ---- Planning phase ----------------------------------------
-            self._emit("system", "checkpoint", {
-                "step": "planning",
-                "message": "PlanningAgent is creating a plan…",
-            })
-            plan = self._run_turn(thread, agents, "planning", cancel)
-            result.plan = plan
+            result.debate_transcript = transcript
+            result.agreed_plan       = agreed_plan
+            result.debate_rounds     = debate_rounds
 
             if cancel.is_set():
                 job.status = JobStatus.CANCELLED
                 return
 
-            # ---- Implement → Review loop --------------------------------
-            for round_num in range(1, self.max_rounds + 1):
-                result.rounds = round_num
+            # ---- Phase 2: Breakdown -------------------------------------
+            chunks = self._breakdown(task, agreed_plan, planner, cancel)
+            result.chunks = chunks
 
-                # Bridge to implementation — thread currently ends in assistant(plan or review)
-                thread.append(self._user(
-                    f"[System] PlanningAgent has provided a plan. "
-                    f"ImplementationAgent, please implement it step by step "
-                    f"(round {round_num} of {self.max_rounds}). "
-                    f"Use tools to take real actions."
-                ) if round_num == 1 else self._user(
-                    f"[System] ReviewAgent has requested changes. "
-                    f"ImplementationAgent, please address the issues identified "
-                    f"(round {round_num} of {self.max_rounds})."
-                ))
+            if cancel.is_set():
+                job.status = JobStatus.CANCELLED
+                return
 
-                self._emit("system", "checkpoint", {
-                    "step": "implementation",
-                    "round": round_num,
-                    "message": f"ImplementationAgent executing (round {round_num}/{self.max_rounds})…",
-                })
-                impl = self._run_turn(thread, agents, "implementation", cancel)
-                result.implementation_notes.append(impl)
+            # ---- Phase 3+4: Execute → Review loop -----------------------
+            execution_results: list[str] = []
+            for loop in range(1, MAX_REVIEW_LOOPS + 2):
+                result.review_loops = loop
+
+                exec_results = self._execute(chunks, executor, cancel, pass_num=loop)
+                execution_results.extend(exec_results)
+                result.execution_results = execution_results
 
                 if cancel.is_set():
                     job.status = JobStatus.CANCELLED
                     return
 
-                # Bridge to review — thread ends in assistant(impl)
-                thread.append(self._user(
-                    "[System] ImplementationAgent has finished. "
-                    "ReviewAgent, please audit the implementation against the plan's success criteria."
-                ))
-
-                self._emit("system", "checkpoint", {
-                    "step": "review",
-                    "round": round_num,
-                    "message": f"ReviewAgent auditing (round {round_num}/{self.max_rounds})…",
-                })
-                review = self._run_turn(thread, agents, "review", cancel)
+                review = self._review(task, agreed_plan, execution_results, reviewer, cancel)
                 result.review = review
 
                 if cancel.is_set():
                     job.status = JobStatus.CANCELLED
                     return
 
-                if "overall verdict: pass" in review.lower():
+                verdict = review.lower()
+                if "overall verdict: pass" in verdict:
                     result.passed = True
                     break
+                if "overall verdict: partial" in verdict:
+                    # extract which step to continue from if possible
+                    self._checkpoint("review", "Partial pass — Qwen will continue implementation.")
+                    continue
+                # FAIL — send back for another loop
+                if loop <= MAX_REVIEW_LOOPS:
+                    self._checkpoint(
+                        "review",
+                        f"Review FAIL — sending Qwen back for fix pass {loop + 1}…",
+                    )
+                    # Rebuild chunks from failure feedback
+                    fix_prompt = (
+                        f"TASK:\n{task}\n\n"
+                        f"ORIGINAL PLAN:\n{agreed_plan[:2000]}\n\n"
+                        f"REVIEW FEEDBACK:\n{review}\n\n"
+                        "Produce a numbered list of fix chunks for QwenExecutorAgent to address the issues."
+                    )
+                    fix_resp = planner.respond(
+                        [{"role": "user", "content": fix_prompt}], cancel
+                    )
+                    chunks = _parse_chunks(fix_resp)
+                    result.chunks = chunks
+                else:
+                    break  # out of loops — report what we have
+
+            # ---- Phase 5: Design (if needed and code passed) ------------
+            if result.passed and _needs_design(task) and not cancel.is_set():
+                design_output, design_review = self._design(
+                    task, agreed_plan, execution_results,
+                    planner, designer, reviewer, cancel
+                )
+                result.design_output   = design_output
+                result.design_review   = design_review
+                result.design_approved = "DESIGN APPROVED" in design_review
 
             # ---- Aggregate token usage ----------------------------------
-            for agent in agents.values():
-                result.token_totals[agent.name] = agent.usage.to_dict()
+            usage = TokenUsage()
+            usage.sonnet.add(planner.usage.input_tokens,  planner.usage.output_tokens)
+            usage.nemotron.add(reviewer.usage.input_tokens, reviewer.usage.output_tokens)
+            usage.qwen.add(executor.usage.input_tokens,  executor.usage.output_tokens)
+            usage.gemini.add(designer.usage.input_tokens, designer.usage.output_tokens)
+            result.token_totals = usage.to_dict()
 
             result.duration_seconds = round(time.time() - job.started_at, 2)
             job.result = result
             job.status = JobStatus.DONE
 
             self._emit("system", "done", {
-                "job_id": job.id,
-                "passed": result.passed,
-                "rounds": result.rounds,
+                "job_id":           job.id,
+                "passed":           result.passed,
+                "design_approved":  result.design_approved,
+                "debate_rounds":    result.debate_rounds,
+                "review_loops":     result.review_loops,
                 "duration_seconds": result.duration_seconds,
-                "token_totals": result.token_totals,
+                "token_totals":     result.token_totals,
             })
 
         except Exception as exc:
             job.status = JobStatus.FAILED
-            job.error = str(exc)
+            job.error  = str(exc)
             self._emit("system", "error", {"job_id": job.id, "message": str(exc)})
 
         finally:
@@ -398,14 +535,13 @@ class Orchestrator:
     async def submit(
         self,
         task: str,
-        image_bytes: bytes | None = None,
-        image_media_type: str = "image/png",
+        image_bytes:       bytes | None = None,
+        image_media_type:  str          = "image/png",
     ) -> Job:
         job_id = uuid.uuid4().hex[:8]
-        job = Job(id=job_id, task=task)
+        job    = Job(id=job_id, task=task)
         self._jobs[job_id] = job
 
-        # Trim history if needed
         if len(self._jobs) > self.MAX_JOBS:
             oldest = min(self._jobs.values(), key=lambda j: j.created_at)
             del self._jobs[oldest.id]

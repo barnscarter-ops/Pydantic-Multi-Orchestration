@@ -33,7 +33,7 @@ from orchestrator import Event, Orchestrator
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-orchestrator = Orchestrator(max_rounds=3, max_p2p_depth=2)
+orchestrator = Orchestrator()
 _ws_clients: set[WebSocket] = set()
 
 
