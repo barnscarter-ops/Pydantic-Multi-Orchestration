@@ -18,7 +18,8 @@ except Exception as e:
 
 try:
     from google import genai
-    r = genai.Client(api_key=os.getenv("GEMINI_API_KEY")).models.generate_content(model=os.getenv("GEMINI_MODEL"), contents="Say OK")
+    gc = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    r = gc.models.generate_content(model=os.getenv("GEMINI_MODEL"), contents="Say OK")
     print(f"[OK]   Gemini: {r.text!r}")
 except Exception as e:
     print(f"[FAIL] Gemini: {e}")

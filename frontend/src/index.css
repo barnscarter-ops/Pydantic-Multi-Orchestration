@@ -3,15 +3,23 @@
 :root {
   --bg: #0d1117;
   --surface: #161b22;
+  --surface2: #1c2128;
   --border: #30363d;
   --text: #e6edf3;
   --muted: #8b949e;
   --accent: #58a6ff;
 
+  /* Legacy aliases kept for any remaining references */
   --planning: #3fb950;
   --implementation: #d2a8ff;
   --review: #ffa657;
   --system: #8b949e;
+
+  /* 4-model agent palette */
+  --sonnet: #58a6ff;
+  --nemotron: #ffa657;
+  --qwen: #3fb950;
+  --gemini: #d2a8ff;
 }
 
 body {

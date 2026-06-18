@@ -13,6 +13,15 @@ Routes:
 
 from __future__ import annotations
 
+# Logfire instrumentation — must come before pydantic-ai agent runs
+try:
+    import logfire
+    logfire.configure(send_to_logfire="if-token-present")
+    logfire.instrument_pydantic_ai()
+    logfire.instrument_httpx(capture_all=False)
+except Exception:
+    pass  # logfire is optional; continues without telemetry if not authenticated
+
 import asyncio
 import json
 import os
