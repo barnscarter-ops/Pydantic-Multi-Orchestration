@@ -81,3 +81,16 @@
   flex-direction: column;
   gap: 4px;
 }
+
+.running-badge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--qwen);
+  animation: blink 1.2s step-start infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}

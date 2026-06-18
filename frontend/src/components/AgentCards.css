@@ -20,8 +20,10 @@
   gap: 6px;
   margin-bottom: 6px;
 }
-.icon { font-size: 1rem; }
-.agent-name { font-weight: 600; font-size: 0.85rem; flex: 1; }
+.icon { font-size: 1rem; flex-shrink: 0; }
+.agent-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.agent-name  { font-weight: 600; font-size: 0.82rem; }
+.agent-model { font-size: 0.65rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .badge {
   font-size: 0.65rem;

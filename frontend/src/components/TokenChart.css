@@ -28,3 +28,4 @@
 }
 .cost-table th { color: var(--muted); font-weight: 500; }
 .cost-table td { font-family: monospace; }
+.rate-cell { font-family: inherit; font-size: 0.7rem; color: var(--muted); }

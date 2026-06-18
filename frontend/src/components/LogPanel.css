@@ -14,10 +14,11 @@
 .log-entry {
   display: flex;
   gap: 8px;
-  align-items: baseline;
+  align-items: flex-start;
   border-left: 2px solid var(--agent-color, var(--border));
   padding-left: 8px;
-  min-height: 1.4em;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 .log-ts { color: var(--muted); flex-shrink: 0; width: 64px; }
