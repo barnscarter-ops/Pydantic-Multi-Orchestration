@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, shell, Menu } = require('electron');
+const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
@@ -8,11 +8,21 @@ const http = require('http');
 
 const PORT       = 8000;
 const SERVER_URL = `http://localhost:${PORT}`;
-const REPO_ROOT  = path.join(__dirname, '..', '..');
 
-// Prefer the project .venv python on Windows
-const VENV_PY = path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe');
-const PYTHON  = fs.existsSync(VENV_PY) ? VENV_PY : 'python';
+// In packaged mode, backend files land in process.resourcesPath/backend.
+// In dev mode, they're two levels up from this file (the repo root).
+const isPacked   = app.isPackaged;
+const BACKEND_ROOT = isPacked
+  ? path.join(process.resourcesPath, 'backend')
+  : path.join(__dirname, '..', '..');
+
+// Python resolution order:
+//   1. ORCHESTRATOR_PYTHON env var (user override)
+//   2. .venv bundled/placed in backend resources
+//   3. system python on PATH
+const VENV_PY = path.join(BACKEND_ROOT, '.venv', 'Scripts', 'python.exe');
+const PYTHON  = process.env.ORCHESTRATOR_PYTHON ||
+  (fs.existsSync(VENV_PY) ? VENV_PY : 'python');
 
 let backendProcess = null;
 let mainWindow     = null;
@@ -20,18 +30,29 @@ let mainWindow     = null;
 // ── Backend ────────────────────────────────────────────────────────────────
 
 function startBackend() {
-  backendProcess = spawn(
-    PYTHON,
-    ['-m', 'uvicorn', 'server:app', '--host', '127.0.0.1', '--port', String(PORT)],
-    {
-      cwd:   REPO_ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env:   { ...process.env },
-    }
-  );
+  const uvicornArgs = [
+    '-m', 'uvicorn', 'server:app',
+    '--host', '127.0.0.1',
+    '--port', String(PORT),
+  ];
+  // Only use --reload in dev mode (file watching breaks in packaged asar)
+  if (!isPacked) uvicornArgs.push('--reload');
+
+  backendProcess = spawn(PYTHON, uvicornArgs, {
+    cwd:   BACKEND_ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env:   { ...process.env },
+  });
   backendProcess.stdout.on('data', d => process.stdout.write(d));
   backendProcess.stderr.on('data', d => process.stderr.write(d));
-  backendProcess.on('error', err => console.error('[backend]', err.message));
+  backendProcess.on('error', err => {
+    console.error('[backend]', err.message);
+    dialog.showErrorBox(
+      'Backend failed to start',
+      `Could not launch Python backend.\n\nPython: ${PYTHON}\nError: ${err.message}\n\n` +
+      'Set the ORCHESTRATOR_PYTHON environment variable to the correct python path and restart.'
+    );
+  });
   backendProcess.on('exit', code => console.log('[backend] exited with code', code));
 }
 
@@ -77,12 +98,9 @@ function createWindow() {
     },
   });
 
-  // Strip the default menu bar (keeps keyboard shortcuts)
   Menu.setApplicationMenu(null);
-
   mainWindow.loadURL(SERVER_URL);
 
-  // Open external links in default browser, not Electron
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith('http://localhost') && !url.startsWith('http://127.0.0.1')) {
       shell.openExternal(url);

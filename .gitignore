@@ -12,3 +12,4 @@ build/
 venv/
 node_modules/
 frontend/dist/
+frontend/dist-electron/

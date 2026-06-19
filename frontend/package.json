@@ -9,7 +9,43 @@
     "build": "vite build",
     "preview": "vite preview",
     "electron": "electron electron/main.js",
-    "electron:build": "vite build && electron electron/main.js"
+    "dist": "vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.homelab.orchestrator",
+    "productName": "Orchestrator",
+    "copyright": "Copyright © 2026 Carter Barns",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "!node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "backend",
+        "filter": [
+          "*.py",
+          ".env",
+          "requirements.txt",
+          "frontend/dist/**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Orchestrator"
+    }
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -24,6 +60,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
     "vite": "^5.4.0"
   }
 }
