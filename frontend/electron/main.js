@@ -39,9 +39,10 @@ function startBackend() {
   if (!isPacked) uvicornArgs.push('--reload');
 
   backendProcess = spawn(PYTHON, uvicornArgs, {
-    cwd:   BACKEND_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env:   { ...process.env },
+    cwd:         BACKEND_ROOT,
+    stdio:       ['ignore', 'pipe', 'pipe'],
+    env:         { ...process.env },
+    windowsHide: true,
   });
   backendProcess.stdout.on('data', d => process.stdout.write(d));
   backendProcess.stderr.on('data', d => process.stderr.write(d));
