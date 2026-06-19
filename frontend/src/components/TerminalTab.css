@@ -2,7 +2,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #0d1117;
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -10,27 +10,27 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  padding: 6px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.terminal-dot {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-}
+.terminal-dot { width: 9px; height: 9px; border-radius: 50%; }
 .terminal-dot.red    { background: #ff5f57; }
 .terminal-dot.yellow { background: #ffbd2e; }
 .terminal-dot.green  { background: #28c840; }
 
 .terminal-title {
   margin-left: 8px;
-  font-size: 0.75rem;
-  color: #8b949e;
+  font-size: 0.67rem;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.04em;
 }
 
 .terminal-container {
   flex: 1;
-  padding: 8px;
+  padding: 10px;
   overflow: hidden;
 }

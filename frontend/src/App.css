@@ -5,92 +5,98 @@
   overflow: hidden;
 }
 
+/* ── Header ──────────────────────────────────────────── */
 .header {
+  height: 46px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 20px;
+  justify-content: space-between;
+  padding: 0 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.logo { font-weight: 700; font-size: 1rem; }
-.subtitle { color: var(--muted); font-size: 0.75rem; }
 
-.main {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
+.app-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
 }
 
-.sidebar {
-  width: 280px;
-  flex-shrink: 0;
+.header-right {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
+  align-items: center;
+  gap: 14px;
 }
 
-.content {
-  flex: 1;
+/* ── View switcher ───────────────────────────────────── */
+.view-switcher {
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  gap: 1px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px;
 }
 
-.tabs {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
-}
-.tab {
+.view-btn {
   background: transparent;
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 14px;
-  font-size: 0.8rem;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 13px;
+  font-size: 0.7rem;
   font-weight: 500;
-}
-.tab.active {
-  background: var(--accent);
-  color: #000;
-  border-color: var(--accent);
+  letter-spacing: 0.04em;
+  transition: color 0.12s, background 0.12s, box-shadow 0.15s;
 }
 
-.tab-content {
-  flex: 1;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+.view-btn:hover:not(.active):not(:disabled) {
+  color: var(--text);
+  background: var(--surface2);
+  opacity: 1;
+  box-shadow: none;
 }
 
-.summary-box {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  font-size: 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.view-btn.active {
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: none;
+  opacity: 1;
 }
 
-.running-badge {
-  margin-left: auto;
-  font-size: 0.72rem;
-  font-weight: 700;
+/* ── Live pill ───────────────────────────────────────── */
+.live-pill {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   color: var(--qwen);
-  animation: blink 1.2s step-start infinite;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--qwen) 35%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--qwen) 8%, transparent);
+  animation: live-pulse 1.6s ease-in-out infinite;
 }
 
-@keyframes blink {
+@keyframes live-pulse {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.3; }
+  50%       { opacity: 0.45; }
+}
+
+/* ── Workspace (sidebar + content) ──────────────────── */
+.workspace {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
 }

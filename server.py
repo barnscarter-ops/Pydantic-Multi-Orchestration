@@ -185,6 +185,133 @@ async def ws_logs(websocket: WebSocket) -> None:
 
 
 # ---------------------------------------------------------------------------
+# WebSocket terminal — virtual shell (command-at-a-time, no PTY needed)
+# ---------------------------------------------------------------------------
+
+@app.websocket("/ws/terminal")
+async def ws_terminal(websocket: WebSocket) -> None:
+    await websocket.accept()
+
+    cwd = str(Path(__file__).parent)
+    history: list[str] = []
+    hist_idx = -1
+
+    async def send(text: str) -> None:
+        try:
+            await websocket.send_text(text)
+        except Exception:
+            pass
+
+    async def show_prompt() -> None:
+        await send(f"\r\n\x1b[32m{cwd}\x1b[0m\x1b[90m $\x1b[0m ")
+
+    await send("\x1b[1;34mOrchestrator Shell\x1b[0m  \x1b[90m(Windows CMD)\x1b[0m\r\n")
+    await show_prompt()
+
+    line = ""
+    try:
+        while True:
+            data = await websocket.receive_text()
+
+            if data == "\r":  # Enter
+                await send("\r\n")
+                command = line.strip()
+                line = ""
+                hist_idx = -1
+
+                if command:
+                    history.append(command)
+
+                    if command.lower() in ("exit", "quit"):
+                        await send("Goodbye.\r\n")
+                        break
+
+                    elif command.lower() in ("cls", "clear"):
+                        await send("\x1b[2J\x1b[H")
+
+                    elif command.lower() == "cd" or command.lower().startswith("cd ") or command.lower().startswith("cd\t"):
+                        parts = command.split(None, 1)
+                        if len(parts) == 1:
+                            await send(f"{cwd}\r\n")
+                        else:
+                            target = parts[1].strip().strip('"').strip("'")
+                            candidate = Path(target) if Path(target).is_absolute() else Path(cwd) / target
+                            try:
+                                candidate = candidate.resolve(strict=True)
+                                if candidate.is_dir():
+                                    cwd = str(candidate)
+                                else:
+                                    await send(f"Not a directory: {target}\r\n")
+                            except FileNotFoundError:
+                                await send(f"The system cannot find the path specified.\r\n")
+
+                    else:
+                        try:
+                            proc = await asyncio.create_subprocess_shell(
+                                command,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                                cwd=cwd,
+                            )
+                            try:
+                                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                            except asyncio.TimeoutError:
+                                try:
+                                    proc.terminate()
+                                except Exception:
+                                    pass
+                                stdout = b"[command timed out after 60 s]\n"
+                            if stdout:
+                                out = stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\n", "\r\n")
+                                await send(out)
+                        except Exception as exc:
+                            await send(f"Error: {exc}\r\n")
+
+                await show_prompt()
+
+            elif data in ("\x7f", "\x08"):  # Backspace / DEL
+                if line:
+                    line = line[:-1]
+                    await send("\x08 \x08")
+
+            elif data == "\x03":  # Ctrl+C
+                line = ""
+                hist_idx = -1
+                await send("^C")
+                await show_prompt()
+
+            elif data == "\x1b[A":  # Up arrow — history back
+                if history:
+                    hist_idx = min(hist_idx + 1, len(history) - 1)
+                    new_line = history[-(hist_idx + 1)]
+                    await send("\x08 \x08" * len(line))
+                    await send(new_line)
+                    line = new_line
+
+            elif data == "\x1b[B":  # Down arrow — history forward
+                if hist_idx > 0:
+                    hist_idx -= 1
+                    new_line = history[-(hist_idx + 1)]
+                    await send("\x08 \x08" * len(line))
+                    await send(new_line)
+                    line = new_line
+                elif hist_idx == 0:
+                    hist_idx = -1
+                    await send("\x08 \x08" * len(line))
+                    line = ""
+
+            elif data.startswith("\x1b"):
+                pass  # ignore other escape sequences
+
+            else:
+                line += data
+                await send(data)  # echo back
+
+    except (WebSocketDisconnect, Exception):
+        pass
+
+
+# ---------------------------------------------------------------------------
 # API index
 # ---------------------------------------------------------------------------
 

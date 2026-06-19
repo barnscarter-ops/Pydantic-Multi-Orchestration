@@ -1,49 +1,87 @@
-.task-form {
+.task-dock {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: stretch;
+  height: 56px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.task-input {
-  resize: vertical;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.dock-input {
+  flex: 1;
+  resize: none;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
   color: var(--text);
-  padding: 8px;
-  font-size: 0.875rem;
-  font-family: inherit;
-  line-height: 1.5;
-}
-.task-input:focus { outline: none; border-color: var(--accent); }
-
-.image-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.btn-secondary {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  font-weight: 400;
+  padding: 10px 16px;
   font-size: 0.8rem;
-  padding: 4px 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  line-height: 1.55;
+  outline: none;
+}
+
+.dock-input::placeholder { color: var(--muted); opacity: 0.4; }
+.dock-input:disabled { opacity: 0.4; }
+
+.dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+
+.dock-attach {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 3px;
   white-space: nowrap;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  letter-spacing: 0.02em;
 }
 
-.btn-clear {
+.dock-attach:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--muted);
+  opacity: 1;
+  background: var(--surface2);
+  box-shadow: none;
+}
+
+.dock-clear {
   background: transparent;
   color: var(--muted);
   border: none;
-  font-size: 0.75rem;
-  padding: 2px 6px;
+  padding: 4px 6px;
+  font-size: 0.72rem;
+}
+
+.dock-clear:hover:not(:disabled) {
+  color: var(--text);
+  opacity: 1;
+  box-shadow: none;
+}
+
+.dock-run {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 3px;
+  padding: 7px 22px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  transition: box-shadow 0.2s ease, opacity 0.15s;
+}
+
+.dock-run:hover:not(:disabled) {
+  opacity: 1;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent);
 }

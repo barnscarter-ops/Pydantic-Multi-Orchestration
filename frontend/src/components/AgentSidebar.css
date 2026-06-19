@@ -1,0 +1,334 @@
+/* ── Sidebar container ───────────────────────────────── */
+.agent-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* ── Card ────────────────────────────────────────────── */
+.agent-card {
+  flex: 1;
+  position: relative;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  cursor: default;
+
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease;
+
+  /* Staggered entrance */
+  animation: cardSlideIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 0.07s);
+}
+
+.agent-card:last-child { border-bottom: none; }
+
+@keyframes cardSlideIn {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Hover glow ──────────────────────────────────────── */
+.agent-card:hover {
+  background: color-mix(in srgb, var(--agent-color) 6%, var(--surface));
+  box-shadow: inset 4px 0 0 var(--agent-color),
+              inset 0 0 40px color-mix(in srgb, var(--agent-color) 8%, transparent);
+}
+
+/* ── Active / heartbeat ──────────────────────────────── */
+.agent-card.active {
+  background: color-mix(in srgb, var(--agent-color) 5%, var(--surface));
+  animation:
+    cardSlideIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both,
+    cardPulse 2s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 0.07s), 0s;
+}
+
+@keyframes cardPulse {
+  0%, 100% {
+    box-shadow:
+      inset 4px 0 0 var(--agent-color),
+      inset 0 0 20px color-mix(in srgb, var(--agent-color) 8%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 4px 0 0 var(--agent-color),
+      inset 0 0 40px color-mix(in srgb, var(--agent-color) 18%, transparent),
+      0 0 20px color-mix(in srgb, var(--agent-color) 12%, transparent);
+  }
+}
+
+/* Done state */
+.agent-card.done {
+  opacity: 0.65;
+  transition: opacity 0.8s ease, background 0.25s ease;
+}
+
+/* ── Left accent bar ─────────────────────────────────── */
+.card-accent {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--agent-color);
+  opacity: 0.3;
+  transition: opacity 0.3s ease;
+}
+
+.agent-card:hover .card-accent { opacity: 0.8; }
+.agent-card.active .card-accent {
+  opacity: 1;
+  animation: accentGlow 2s ease-in-out infinite;
+}
+.agent-card.done .card-accent { opacity: 0.45; }
+
+@keyframes accentGlow {
+  0%, 100% { box-shadow: 0 0 6px var(--agent-color); }
+  50%       { box-shadow: 0 0 18px var(--agent-color), 0 0 32px color-mix(in srgb, var(--agent-color) 50%, transparent); }
+}
+
+/* ── Inner layout ────────────────────────────────────── */
+.card-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px 10px 18px;
+  height: 100%;
+}
+
+/* ── Avatar column (emoji + dot) ─────────────────────── */
+.card-avatar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.char-wrap {
+  width: 44px;
+  height: 48px;
+  flex-shrink: 0;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.2s;
+}
+
+.agent-char {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.agent-card:hover .char-wrap {
+  transform: scale(1.12) rotate(-3deg);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--agent-color) 55%, transparent));
+}
+
+.agent-card.active .char-wrap {
+  animation: charBob 2s ease-in-out infinite;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--agent-color) 65%, transparent));
+}
+
+@keyframes charBob {
+  0%, 100% { transform: translateY(0)   scale(1); }
+  30%       { transform: translateY(-3px) scale(1.06); }
+  60%       { transform: translateY(1px)  scale(0.97); }
+}
+
+/* Status dot */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.status-dot.idle {
+  background: var(--border);
+}
+
+.status-dot.active {
+  background: var(--agent-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-color) 25%, transparent);
+  animation: dotBeat 1.1s ease-in-out infinite;
+}
+
+.status-dot.done {
+  background: var(--qwen);
+}
+
+.status-dot.error {
+  background: #f87171;
+}
+
+@keyframes dotBeat {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 0 2px color-mix(in srgb, var(--agent-color) 25%, transparent); }
+  40%       { transform: scale(1.5);  box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-color) 15%, transparent); }
+  70%       { transform: scale(0.85); box-shadow: 0 0 0 1px color-mix(in srgb, var(--agent-color) 30%, transparent); }
+}
+
+/* ── Info column ─────────────────────────────────────── */
+.card-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.card-role {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  transition: color 0.2s;
+}
+
+.agent-card:hover .card-role,
+.agent-card.active .card-role {
+  color: color-mix(in srgb, var(--agent-color) 65%, var(--text));
+}
+
+/* Badge */
+.card-badge {
+  font-size: 0.5rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 2px 5px;
+  border-radius: 2px;
+  border: 1px solid;
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+
+.card-badge.idle {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 30%, transparent);
+  background: transparent;
+}
+
+.card-badge.active {
+  color: var(--agent-color);
+  border-color: color-mix(in srgb, var(--agent-color) 50%, transparent);
+  background: color-mix(in srgb, var(--agent-color) 12%, transparent);
+  animation: badgePulse 1.1s ease-in-out infinite;
+}
+
+@keyframes badgePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; box-shadow: 0 0 6px color-mix(in srgb, var(--agent-color) 40%, transparent); }
+}
+
+.card-badge.done {
+  color: var(--qwen);
+  border-color: color-mix(in srgb, var(--qwen) 40%, transparent);
+  background: color-mix(in srgb, var(--qwen) 10%, transparent);
+}
+
+.card-badge.error {
+  color: #f87171;
+  border-color: rgba(248,113,113,0.4);
+  background: rgba(248,113,113,0.08);
+}
+
+/* Model */
+.card-model {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.58rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
+}
+
+.agent-card:hover .card-model {
+  color: color-mix(in srgb, var(--agent-color) 45%, var(--muted));
+}
+
+/* Meter */
+.card-meter {
+  height: 2px;
+  background: var(--surface2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 2px 0;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--agent-color);
+  border-radius: 2px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--agent-color) 60%, transparent);
+}
+
+.agent-card.active .meter-fill {
+  animation: meterGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes meterGlow {
+  0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--agent-color) 50%, transparent); }
+  50%       { box-shadow: 0 0 12px var(--agent-color); }
+}
+
+/* Stats */
+.card-stats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.56rem;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.stat-dot { color: var(--border); }
+
+.stat-cost {
+  color: var(--agent-color);
+  font-weight: 500;
+}
+
+.stat-waiting {
+  font-style: italic;
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.62rem;
+}
+
+/* ── Scanline (active only) ──────────────────────────── */
+.card-scan {
+  position: absolute;
+  left: 0; right: 0;
+  height: 30px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--agent-color) 10%, transparent),
+    transparent
+  );
+  pointer-events: none;
+  animation: scanDown 2.2s ease-in-out infinite;
+}
+
+@keyframes scanDown {
+  0%   { top: -30px; opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 0.7; }
+  100% { top: 100%; opacity: 0; }
+}

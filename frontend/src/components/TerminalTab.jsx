@@ -1,35 +1,47 @@
 import { useEffect, useRef } from "react";
 import "./TerminalTab.css";
 
+const WS_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/terminal`;
+
 export default function TerminalTab() {
   const containerRef = useRef(null);
-  const termRef = useRef(null);
-  const fitRef = useRef(null);
+  const termRef      = useRef(null);
+  const wsRef        = useRef(null);
+  const fitRef       = useRef(null);
 
   useEffect(() => {
     let terminal;
     let fitAddon;
+    let ws;
 
-    // Lazy-load xterm to avoid SSR issues
     Promise.all([
       import("@xterm/xterm"),
       import("@xterm/addon-fit"),
     ]).then(([{ Terminal }, { FitAddon }]) => {
       terminal = new Terminal({
         theme: {
-          background: "#0d1117",
-          foreground: "#e6edf3",
-          cursor: "#58a6ff",
-          selectionBackground: "#264f78",
-          black: "#0d1117",
-          brightBlack: "#30363d",
-          white: "#e6edf3",
-          brightWhite: "#ffffff",
+          background:          "#1a1d2e",
+          foreground:          "#e4e6f5",
+          cursor:              "#818cf8",
+          cursorAccent:        "#1a1d2e",
+          selectionBackground: "#3e4268",
+          black:               "#1a1d2e",
+          brightBlack:         "#3e4268",
+          red:                 "#f87171",
+          green:               "#50d890",
+          yellow:              "#ffa060",
+          blue:                "#60a0ff",
+          magenta:             "#d088ff",
+          cyan:                "#818cf8",
+          white:               "#e4e6f5",
+          brightWhite:         "#ffffff",
         },
-        fontFamily: '"Fira Code", "Cascadia Code", monospace',
+        fontFamily: '"IBM Plex Mono", "Fira Code", monospace',
         fontSize: 13,
         cursorBlink: true,
-        scrollback: 1000,
+        cursorStyle: "block",
+        scrollback: 2000,
+        allowTransparency: false,
       });
 
       fitAddon = new FitAddon();
@@ -38,17 +50,39 @@ export default function TerminalTab() {
       if (containerRef.current) {
         terminal.open(containerRef.current);
         fitAddon.fit();
-
-        terminal.writeln("\x1b[1;34m╔══════════════════════════════════════╗\x1b[0m");
-        terminal.writeln("\x1b[1;34m║  Multi-Agent Terminal (read-only)    ║\x1b[0m");
-        terminal.writeln("\x1b[1;34m╚══════════════════════════════════════╝\x1b[0m");
-        terminal.writeln("");
-        terminal.writeln("\x1b[90mAgent tool call outputs will appear here.\x1b[0m");
-        terminal.writeln("");
       }
 
       termRef.current = terminal;
-      fitRef.current = fitAddon;
+      fitRef.current  = fitAddon;
+
+      // Connect WebSocket terminal
+      ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        terminal.writeln("\x1b[1;34m─── Orchestrator Shell ─────────────────────\x1b[0m");
+        terminal.writeln("\x1b[90mConnected · type commands below\x1b[0m");
+        terminal.writeln("");
+      };
+
+      ws.onmessage = (evt) => {
+        terminal.write(evt.data);
+      };
+
+      ws.onclose = () => {
+        terminal.writeln("\x1b[33m\r\n─── connection closed ───────────────────────\x1b[0m");
+      };
+
+      ws.onerror = () => {
+        terminal.writeln("\x1b[31m\r\n─── connection error ────────────────────────\x1b[0m");
+      };
+
+      // Send keystrokes to the shell
+      terminal.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(data);
+        }
+      });
     });
 
     const handleResize = () => fitRef.current?.fit();
@@ -56,16 +90,9 @@ export default function TerminalTab() {
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      wsRef.current?.close();
       termRef.current?.dispose();
     };
-  }, []);
-
-  // Expose a global so the log panel can write to the terminal
-  useEffect(() => {
-    window.__agentTerminal = (text) => {
-      termRef.current?.writeln(text);
-    };
-    return () => { delete window.__agentTerminal; };
   }, []);
 
   return (
@@ -74,7 +101,7 @@ export default function TerminalTab() {
         <span className="terminal-dot red" />
         <span className="terminal-dot yellow" />
         <span className="terminal-dot green" />
-        <span className="terminal-title">Agent Tool Output</span>
+        <span className="terminal-title">Shell · cmd.exe</span>
       </div>
       <div ref={containerRef} className="terminal-container" />
     </div>

@@ -2,9 +2,9 @@ import { useState, useRef } from "react";
 import "./TaskForm.css";
 
 export default function TaskForm({ onSubmit, running }) {
-  const [task, setTask] = useState("");
+  const [task, setTask]   = useState("");
   const [image, setImage] = useState(null);
-  const fileRef = useRef();
+  const fileRef           = useRef();
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -12,35 +12,43 @@ export default function TaskForm({ onSubmit, running }) {
     onSubmit({ task, image });
   };
 
+  const handleKey = (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSubmit(e);
+  };
+
   return (
-    <form className="task-form" onSubmit={handleSubmit}>
-      <h2>New Task</h2>
+    <form className="task-dock" onSubmit={handleSubmit}>
       <textarea
-        className="task-input"
-        placeholder="Describe the task for the agents…"
+        className="dock-input"
+        placeholder="Describe the task…  (Ctrl+Enter to run)"
         value={task}
         onChange={(e) => setTask(e.target.value)}
-        rows={5}
+        onKeyDown={handleKey}
+        rows={2}
         disabled={running}
       />
-      <div className="image-row">
+      <div className="dock-actions">
         <button
           type="button"
-          className="btn-secondary"
+          className="dock-attach"
           onClick={() => fileRef.current.click()}
           disabled={running}
+          title="Attach image"
         >
-          {image ? "📎 " + image.name.slice(0, 20) : "Attach Image"}
+          {image ? `📎 ${image.name.slice(0, 14)}` : "attach"}
         </button>
         {image && (
           <button
             type="button"
-            className="btn-clear"
+            className="dock-clear"
             onClick={() => { setImage(null); fileRef.current.value = ""; }}
           >
             ✕
           </button>
         )}
+        <button type="submit" className="dock-run" disabled={running || !task.trim()}>
+          {running ? "running…" : "run"}
+        </button>
       </div>
       <input
         ref={fileRef}
@@ -49,9 +57,6 @@ export default function TaskForm({ onSubmit, running }) {
         hidden
         onChange={(e) => setImage(e.target.files[0] || null)}
       />
-      <button type="submit" disabled={running || !task.trim()}>
-        {running ? "Running…" : "Run Agents"}
-      </button>
     </form>
   );
 }

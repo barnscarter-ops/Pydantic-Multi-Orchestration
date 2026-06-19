@@ -1,48 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0d1117;
-  --surface: #161b22;
-  --surface2: #1c2128;
-  --border: #30363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #58a6ff;
+  --bg:       #1a1d2e;
+  --surface:  #252840;
+  --surface2: #2e3250;
+  --border:   #3e4268;
+  --text:     #e4e6f5;
+  --muted:    #7e82b8;
+  --accent:   #818cf8;
 
-  /* Legacy aliases kept for any remaining references */
-  --planning: #3fb950;
-  --implementation: #d2a8ff;
-  --review: #ffa657;
-  --system: #8b949e;
+  --sonnet:   #60a0ff;
+  --nemotron: #ffa060;
+  --qwen:     #50d890;
+  --gemini:   #d088ff;
 
-  /* 4-model agent palette */
-  --sonnet: #58a6ff;
-  --nemotron: #ffa657;
-  --qwen: #3fb950;
-  --gemini: #d2a8ff;
+  --planning:       #50d890;
+  --implementation: #d088ff;
+  --review:         #ffa060;
+  --system:         #7e82b8;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
-
-h2 { font-size: 1rem; font-weight: 600; color: var(--text); }
-h3 { font-size: 0.85rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 
 button {
   cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
   background: var(--accent);
-  color: #000;
+  color: #fff;
   border: none;
-  border-radius: 6px;
-  padding: 6px 16px;
-  font-size: 0.875rem;
+  border-radius: 4px;
+  padding: 7px 18px;
+  font-size: 0.78rem;
   font-weight: 600;
-  transition: opacity 0.15s;
+  letter-spacing: 0.02em;
+  transition: opacity 0.15s, box-shadow 0.2s;
 }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
-button:hover:not(:disabled) { opacity: 0.85; }
+button:disabled { opacity: 0.3; cursor: not-allowed; }
+button:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent);
+}

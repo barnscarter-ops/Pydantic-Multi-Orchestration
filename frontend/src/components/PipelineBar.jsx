@@ -1,37 +1,48 @@
 import "./PipelineBar.css";
 
 const PHASES = [
-  { id: "debate",    label: "Debate",    icon: "💬" },
-  { id: "breakdown", label: "Breakdown", icon: "📋" },
-  { id: "execute",   label: "Execute",   icon: "⚙️" },
-  { id: "review",    label: "Review",    icon: "🔍" },
-  { id: "design",    label: "Design",    icon: "✨" },
+  { id: "debate",    label: "Debate",    color: "var(--sonnet)"   },
+  { id: "breakdown", label: "Breakdown", color: "var(--nemotron)" },
+  { id: "execute",   label: "Execute",   color: "var(--qwen)"     },
+  { id: "review",    label: "Review",    color: "var(--nemotron)" },
+  { id: "design",    label: "Design",    color: "var(--gemini)"   },
 ];
 
-export default function PipelineBar({ phase }) {
-  const activeIdx = PHASES.findIndex((p) => p.id === phase);
-  const isDone    = phase === "done";
+export default function PipelineBar({ phase, summary }) {
+  const activeIdx   = PHASES.findIndex((p) => p.id === phase);
+  const isDone      = phase === "done";
+  const activeColor = isDone
+    ? "var(--qwen)"
+    : activeIdx >= 0 ? PHASES[activeIdx].color : "var(--border)";
 
   return (
-    <div className="pipeline-bar">
-      <h3>Pipeline</h3>
-      <div className="phases">
-        {PHASES.map((p, i) => {
-          const done   = isDone || i < activeIdx;
-          const active = !isDone && i === activeIdx;
-          return (
-            <div key={p.id} className={`phase-step ${done ? "done" : active ? "active" : ""}`}>
-              <div className="phase-dot">
-                {done ? "✓" : active ? <span className="pulse">{p.icon}</span> : p.icon}
-              </div>
-              <span className="phase-label">{p.label}</span>
-              {i < PHASES.length - 1 && (
-                <div className={`phase-connector ${done ? "done" : ""}`} />
-              )}
-            </div>
-          );
-        })}
-      </div>
+    <div className="pipeline-strip" style={{ "--active-color": activeColor }}>
+      <span className="strip-head">pipeline</span>
+      <span className="strip-divider">│</span>
+      {PHASES.map((p, i) => {
+        const done   = isDone || i < activeIdx;
+        const active = !isDone && i === activeIdx;
+        return (
+          <div key={p.id} className={`strip-step ${done ? "done" : active ? "active" : ""}`}>
+            {i > 0 && <span className="strip-sep">·</span>}
+            {done && <span className="strip-check" style={{ color: p.color }}>✓</span>}
+            <span className="strip-name">{p.label}</span>
+          </div>
+        );
+      })}
+
+      {isDone && summary && (
+        <>
+          <span className="strip-divider" style={{ marginLeft: "auto" }}>│</span>
+          <span className="strip-summary">
+            {summary.debate_rounds ?? "—"} rounds · {summary.duration_seconds}s
+            · ${summary.token_totals?.total_estimated_cost_usd?.toFixed(4) ?? "—"}
+            · <span className={summary.passed ? "sum-pass" : "sum-fail"}>
+                {summary.passed ? "✓ passed" : "⚠ incomplete"}
+              </span>
+          </span>
+        </>
+      )}
     </div>
   );
 }
