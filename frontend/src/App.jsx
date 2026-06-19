@@ -44,6 +44,7 @@ export default function App() {
   const [phase, setPhase]         = useState("idle");
   const [jobId, setJobId]         = useState(null);
   const [tier, setTier]           = useState(null);
+  const [inputMode, setInputMode] = useState("task");
   const wsRef = useRef(null);
 
   const connectWs = useCallback(() => {
@@ -94,6 +95,29 @@ export default function App() {
           return next;
         });
         if (msg.data) setSummary(msg.data);
+        if (msg.type === "done") setInputMode("chat");
+      }
+
+      if (msg.type === "debrief") {
+        setAgents((prev) => ({ ...prev, sonnet: { ...prev.sonnet, status: "idle" } }));
+        setLogs((prev) => {
+          const resolved = prev.map(e =>
+            e.type === "start" && e.agent === "sonnet" && !e.resolved ? { ...e, resolved: true } : e
+          );
+          return [...resolved.slice(-500), { ts, agent: "sonnet", type: "debrief", data: msg.data, color }];
+        });
+        return;
+      }
+
+      if (msg.type === "chat_response") {
+        setAgents((prev) => {
+          const next = {};
+          for (const k of Object.keys(prev)) {
+            next[k] = { ...prev[k], status: "idle", usage: null };
+          }
+          return next;
+        });
+        return;
       }
 
       // Stream deltas: accumulate into the last stream entry for this agent
@@ -231,6 +255,24 @@ export default function App() {
     });
   };
 
+  const handleChat = async (message) => {
+    await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+  };
+
+  const handleNewTask = () => {
+    setInputMode("task");
+    setLogs([]);
+    setSummary(null);
+    setPhase("idle");
+    setTier(null);
+    setAgents(INITIAL_AGENTS);
+    setJobId(null);
+  };
+
   return (
     <div className="app">
 
@@ -265,7 +307,13 @@ export default function App() {
       </div>
 
       {running && <InjectBar onInject={handleInject} />}
-      <TaskForm onSubmit={handleSubmit} running={running} />
+      <TaskForm
+        onSubmit={handleSubmit}
+        onChat={handleChat}
+        onNewTask={handleNewTask}
+        mode={inputMode}
+        running={running}
+      />
 
     </div>
   );

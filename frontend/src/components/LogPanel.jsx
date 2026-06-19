@@ -182,6 +182,22 @@ function ThinkingBlock({ entry }) {
   );
 }
 
+// ── Debrief — post-pipeline Sonnet summary shown as a chat bubble ─────────
+function DebriefBlock({ entry }) {
+  const { data, color, ts } = entry;
+  const text = data?.text ?? "";
+  return (
+    <div className="log-debrief" style={{ "--agent-color": color }}>
+      <div className="log-debrief-header">
+        <span className="log-debrief-label" style={{ color }}>Sonnet</span>
+        <span className="log-debrief-tag">summary</span>
+        <span className="log-msg-ts">{ts}</span>
+      </div>
+      <div className="log-debrief-body">{text}</div>
+    </div>
+  );
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────
 export default function LogPanel({ logs }) {
   const containerRef = useRef(null);
@@ -206,6 +222,7 @@ export default function LogPanel({ logs }) {
           case "user_inject": return <UserInjectBlock  key={i} entry={entry} />;
           case "stream":      return <StreamBlock      key={i} entry={entry} />;
           case "start":       return <ThinkingBlock   key={i} entry={entry} />;
+          case "debrief":     return <DebriefBlock     key={i} entry={entry} />;
           default:            return null;
         }
       })}

@@ -69,6 +69,19 @@
   box-shadow: none;
 }
 
+.dock-new-task {
+  color: var(--muted);
+  border-color: var(--border);
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.dock-new-task:hover {
+  opacity: 1;
+  color: var(--text);
+  box-shadow: none;
+}
+
 .dock-run {
   background: var(--accent);
   color: #fff;

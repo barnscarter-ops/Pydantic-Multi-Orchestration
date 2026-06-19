@@ -174,6 +174,18 @@ class InjectRequest(BaseModel):
     job_id:  str
 
 
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest) -> JSONResponse:
+    if not req.message.strip():
+        raise HTTPException(400, "message required")
+    asyncio.create_task(orchestrator.chat_respond(req.message.strip()))
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/inject")
 async def inject(req: InjectRequest) -> JSONResponse:
     if not req.comment.strip():

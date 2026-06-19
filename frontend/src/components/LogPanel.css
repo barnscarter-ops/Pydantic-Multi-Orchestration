@@ -327,6 +327,54 @@
   font-style: italic;
 }
 
+/* ── Debrief — post-task Sonnet summary ─────────────────────────────────── */
+.log-debrief {
+  margin: 10px 16px 10px 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--agent-color, var(--border)) 30%, transparent);
+  border-left: 3px solid var(--agent-color, var(--border));
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--agent-color, var(--border)) 6%, var(--surface));
+  animation: msgIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.log-debrief-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.log-debrief-label {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.log-debrief-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--agent-color, var(--muted));
+  opacity: 0.6;
+  border: 1px solid color-mix(in srgb, var(--agent-color, var(--border)) 40%, transparent);
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+
+.log-debrief-body {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Token usage row ────────────────────────────────────────────────────── */
 .log-usage {
   display: flex;

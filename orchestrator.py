@@ -196,6 +196,9 @@ class Orchestrator:
         self._run_lock         = asyncio.Lock()
         self._active_job:      Job | None     = None
         self._injection_queue: asyncio.Queue  = asyncio.Queue()
+        self._last_task:       str            = ""
+        self._last_results:    list[str]      = []
+        self._chat_history:    list[dict]     = []
 
     # ------------------------------------------------------------------
     # Helpers
@@ -267,6 +270,65 @@ class Orchestrator:
         """Enqueue a user comment to be prepended to the next agent call."""
         self._injection_queue.put_nowait(comment)
         self._emit("system", "user_inject", {"comment": comment})
+
+    async def _debrief(self, task: str, execution_results: list[str]) -> None:
+        """Non-streaming post-task summary: tells the user what was built and how to run it."""
+        results_text = "\n\n".join(execution_results[:6]) if execution_results else "(no execution output)"
+        prompt = (
+            "A multi-agent coding pipeline just finished. Here's what happened:\n\n"
+            f"TASK: {task}\n\n"
+            f"EXECUTION OUTPUT:\n{results_text[:3000]}\n\n"
+            "Write a SHORT, friendly paragraph (3-5 sentences) for the user:\n"
+            "1. State what was built in plain English.\n"
+            "2. Give the EXACT file paths where output was saved (extract from execution output above).\n"
+            "3. Give the exact command to run or open it.\n"
+            "4. Invite them to ask questions or request changes.\n\n"
+            "No markdown headers. No bullet points. Just natural, warm text."
+        )
+        deps = HomelabDeps(task="debrief", emit=self._emit)
+        self._emit("sonnet", "start", {"text": "Sonnet is writing a summary…"})
+        try:
+            result = await asyncio.wait_for(
+                sonnet_agent.run(prompt, deps=deps),
+                timeout=60,
+            )
+            self._emit("sonnet", "debrief", {"text": result.output})
+        except Exception as exc:
+            self._emit("sonnet", "debrief", {"text": f"Build finished! Check the execution log above for file paths and commands. ({exc})"})
+
+    async def chat_respond(self, message: str) -> None:
+        """Stream a conversational Sonnet response to an arbitrary user message."""
+        self._emit("system", "user_inject", {"comment": message})
+        self._chat_history.append({"role": "user", "content": message})
+
+        context = ""
+        if self._last_task:
+            snippet = "\n".join(self._last_results[:3])[:600]
+            context = (
+                f"Context: the user recently ran a task: '{self._last_task}'. "
+                f"Summary of what was done: {snippet}\n\n"
+            )
+
+        history = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in self._chat_history[-10:]
+        )
+
+        prompt = (
+            "You are a helpful assistant inside a multi-agent coding orchestrator. "
+            "Answer questions, explain what was built, suggest improvements, or just chat naturally. "
+            f"{context}"
+            f"Conversation so far:\n{history}\nAssistant:"
+        )
+
+        deps = HomelabDeps(task="chat", emit=self._emit)
+        try:
+            result = await self._call_stream("sonnet", sonnet_agent, prompt, deps)
+            self._chat_history.append({"role": "assistant", "content": result.output})
+        except Exception:
+            pass
+        finally:
+            self._emit("system", "chat_response", {"ok": True})
 
     def _checkpoint(self, step: str, message: str, **extra: Any) -> None:
         self._emit("system", "checkpoint", {"step": step, "message": message, **extra})
@@ -709,6 +771,13 @@ class Orchestrator:
                     "duration_seconds": result.duration_seconds,
                     "token_totals":     result.token_totals,
                 })
+
+                self._last_task    = task
+                self._last_results = execution_results[:]
+                try:
+                    await self._debrief(task, execution_results)
+                except Exception:
+                    pass
 
             except asyncio.CancelledError:
                 job.status = JobStatus.CANCELLED
