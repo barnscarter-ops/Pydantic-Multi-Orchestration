@@ -18,11 +18,18 @@ const BACKEND_ROOT = isPacked
 
 // Python resolution order:
 //   1. ORCHESTRATOR_PYTHON env var (user override)
-//   2. .venv bundled/placed in backend resources
-//   3. system python on PATH
-const VENV_PY = path.join(BACKEND_ROOT, '.venv', 'Scripts', 'python.exe');
-const PYTHON  = process.env.ORCHESTRATOR_PYTHON ||
-  (fs.existsSync(VENV_PY) ? VENV_PY : 'python');
+//   2. pythonw.exe in bundled .venv (no console window on Windows)
+//   3. python.exe in bundled .venv
+//   4. system pythonw / python on PATH
+// pythonw.exe suppresses the console window for the process and all children,
+// which is more reliable than windowsHide alone (conhost.exe can still flash briefly).
+const VENV_DIR  = path.join(BACKEND_ROOT, '.venv', 'Scripts');
+const VENV_PYW  = path.join(VENV_DIR, 'pythonw.exe');
+const VENV_PY   = path.join(VENV_DIR, 'python.exe');
+const SYS_PYTHONW = process.platform === 'win32' ? 'pythonw' : 'python';
+const PYTHON    = process.env.ORCHESTRATOR_PYTHON ||
+  (fs.existsSync(VENV_PYW) ? VENV_PYW :
+   fs.existsSync(VENV_PY)  ? VENV_PY  : SYS_PYTHONW);
 
 let backendProcess = null;
 let mainWindow     = null;
