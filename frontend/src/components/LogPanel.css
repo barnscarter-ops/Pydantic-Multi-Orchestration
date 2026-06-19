@@ -297,6 +297,15 @@
 .log-thinking-dots span:nth-child(2) { animation-delay: 0.18s; }
 .log-thinking-dots span:nth-child(3) { animation-delay: 0.36s; }
 
+.log-thinking--done {
+  opacity: 0.35;
+}
+.log-thinking--done .log-thinking-dots span {
+  animation: none;
+  opacity: 0.4;
+  transform: scale(0.75);
+}
+
 @keyframes thinkDot {
   0%, 80%, 100% { opacity: 0.2; transform: scale(0.75); }
   40%            { opacity: 1;   transform: scale(1); }

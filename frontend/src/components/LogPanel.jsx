@@ -167,16 +167,16 @@ function StreamBlock({ entry }) {
 
 // ── Thinking indicator — shown while waiting for an agent response ─────────
 function ThinkingBlock({ entry }) {
-  const { agent, color, ts } = entry;
+  const { agent, color, ts, resolved } = entry;
   return (
-    <div className="log-thinking" style={{ "--agent-color": color }}>
+    <div className={`log-thinking${resolved ? " log-thinking--done" : ""}`} style={{ "--agent-color": color }}>
       <span className="log-thinking-dots">
         <span /><span /><span />
       </span>
       <span className="log-thinking-agent" style={{ color }}>
         {AGENT_LABELS[agent] ?? agent}
       </span>
-      <span className="log-thinking-label">thinking</span>
+      <span className="log-thinking-label">{resolved ? "done" : "thinking"}</span>
       <span className="log-ts-aside">{ts}</span>
     </div>
   );

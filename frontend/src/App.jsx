@@ -107,15 +107,19 @@ export default function App() {
           });
         }
         setLogs((prev) => {
-          const last = prev[prev.length - 1];
+          // Resolve any pending start entry for this agent
+          const resolved = prev.map(e =>
+            e.type === "start" && e.agent === msg.agent && !e.resolved ? { ...e, resolved: true } : e
+          );
+          const last = resolved[resolved.length - 1];
           if (last && last.agent === msg.agent && last.type === "stream") {
             return [
-              ...prev.slice(0, -1),
+              ...resolved.slice(0, -1),
               { ...last, data: { text: (last.data?.text ?? "") + (msg.data?.delta ?? "") } },
             ];
           }
           return [
-            ...prev.slice(-500),
+            ...resolved.slice(-500),
             { ts, agent: msg.agent, type: "stream", data: { text: msg.data?.delta ?? "" }, color },
           ];
         });
@@ -132,12 +136,16 @@ export default function App() {
 
       if (["message", "checkpoint", "tool_call", "tool_result", "start", "response"].includes(msg.type)) {
         setLogs((prev) => {
-          // When the final message arrives, drop the preceding stream entry to avoid duplication
           let base = prev;
+          // When the final message arrives, drop the preceding stream entry to avoid duplication
           if (msg.type === "message") {
             const idx = [...prev].reverse().findIndex(e => e.type === "stream" && e.agent === msg.agent);
             if (idx !== -1) base = prev.filter((_, i) => i !== prev.length - 1 - idx);
           }
+          // Resolve any pending start entry for this agent when any new event arrives
+          base = base.map(e =>
+            e.type === "start" && e.agent === msg.agent && !e.resolved ? { ...e, resolved: true } : e
+          );
           return [...base.slice(-500), { ts, agent: msg.agent, type: msg.type, data: msg.data, color }];
         });
       }
