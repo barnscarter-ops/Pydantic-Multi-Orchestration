@@ -42,6 +42,24 @@
 .strip-sep   { color: var(--border); }
 .strip-check { font-size: 0.6rem; }
 
+.strip-step.skipped {
+  opacity: 0.3;
+  text-decoration: line-through;
+  pointer-events: none;
+}
+
+.strip-tier {
+  font-size: 0.57rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
 .strip-summary {
   font-size: 0.65rem;
   color: var(--muted);

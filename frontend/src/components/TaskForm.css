@@ -85,3 +85,28 @@
   opacity: 1;
   box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 50%, transparent);
 }
+
+@media (max-width: 480px) {
+  .task-dock {
+    height: 50px;
+  }
+
+  .dock-input {
+    padding: 8px 10px;
+    font-size: 0.75rem;
+  }
+
+  .dock-attach {
+    display: none;
+  }
+
+  .dock-actions {
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .dock-run {
+    padding: 6px 14px;
+    font-size: 0.7rem;
+  }
+}

@@ -121,12 +121,17 @@ Otherwise end with:
   DEBATE CONTINUES
 
 ROLE 2 — BREAKDOWN
-Convert the agreed plan into a numbered list of atomic execution chunks for Qwen Executor.
+Convert the agreed plan into atomic execution chunks for Qwen Executor.
 Qwen cannot reason — every chunk must be fully self-contained:
   - Exact file path to read/write
   - Exact content or shell command
   - Nothing left to interpretation
 One action per numbered item. Be exhaustive.
+
+If the task contains multiple independent features, split into phases using:
+  ## PHASE: <feature name>
+Each phase gets its own numbered chunk list and its own review cycle.
+This is critical for large tasks — a flat list of 20+ chunks will time out.
 
 ROLE 3 — DESIGN PROMPT
 When implementation is complete and a visual deliverable is needed, produce a
@@ -167,6 +172,10 @@ _QWEN_SYSTEM = """\
 You are the Qwen Executor. Execute the given instruction exactly as specified.
 No planning. No commentary. No reasoning. Just execute.
 Use the provided tools to complete the task immediately.
+
+Before writing any code, use query_rag to retrieve relevant patterns from the coding knowledge base.
+This gives you current pydantic-ai, FastAPI, React, asyncio, and httpx patterns specific to this project.
+
 When finished, output: DONE
 """
 
@@ -180,14 +189,38 @@ Produce high-quality, production-ready outputs. Be creative and precise.
 # Agent definitions
 # ---------------------------------------------------------------------------
 
+# HTTP clients with explicit network-level timeouts so hung API calls actually die.
+# connect=10s, read=120s (allows long LLM responses), write=30s, pool=5s.
+_ANTHROPIC_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0)
+_NVIDIA_TIMEOUT    = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=5.0)
+_QWEN_TIMEOUT      = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=5.0)
+
+_nvidia_http  = httpx.AsyncClient(timeout=_NVIDIA_TIMEOUT)
+_qwen_http    = httpx.AsyncClient(timeout=_QWEN_TIMEOUT)
+
+_nvidia_openai = AsyncOpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=NVIDIA_API_KEY or "placeholder",
+    http_client=_nvidia_http,
+)
+_qwen_openai = AsyncOpenAI(
+    base_url=LLAMA_BASE_URL,
+    api_key="local",
+    http_client=_qwen_http,
+)
+
 _SONNET_AVAILABLE = False
 sonnet_agent: Agent[HomelabDeps] | None = None
 
 try:
     from pydantic_ai.models.anthropic import AnthropicModel
+    _anthropic_http = httpx.AsyncClient(timeout=_ANTHROPIC_TIMEOUT)
     _sonnet_model = AnthropicModel(
         SONNET_MODEL,
-        provider=AnthropicProvider(api_key=ANTHROPIC_API_KEY or "placeholder"),
+        provider=AnthropicProvider(
+            api_key=ANTHROPIC_API_KEY or "placeholder",
+            http_client=_anthropic_http,
+        ),
     )
     sonnet_agent = Agent(
         _sonnet_model,
@@ -202,10 +235,7 @@ except Exception as _e:
 nemotron_agent: Agent[HomelabDeps] = Agent(
     OpenAIChatModel(
         NVIDIA_MODEL,
-        provider=OpenAIProvider(
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key=NVIDIA_API_KEY or "placeholder",
-        ),
+        provider=OpenAIProvider(openai_client=_nvidia_openai),
     ),
     deps_type=HomelabDeps,
     output_type=str,
@@ -215,10 +245,7 @@ nemotron_agent: Agent[HomelabDeps] = Agent(
 qwen_agent: Agent[HomelabDeps] = Agent(
     OpenAIChatModel(
         QWEN_MODEL,
-        provider=OpenAIProvider(
-            base_url=LLAMA_BASE_URL,
-            api_key="local",
-        ),
+        provider=OpenAIProvider(openai_client=_qwen_openai),
     ),
     deps_type=HomelabDeps,
     output_type=str,
@@ -303,7 +330,7 @@ async def run_command(
     ctx: RunContext[HomelabDeps],
     command: str,
     cwd: str | None = None,
-    timeout: int = 60,
+    timeout: int = 300,
 ) -> str:
     """Execute a shell command and return exit code + output."""
     ctx.deps.emit("qwen", "tool_call", {"tool": "run_command", "command": command[:120]})
@@ -413,4 +440,32 @@ async def fetch_url(
     except Exception as exc:
         result = f"Fetch error: {exc}"
     ctx.deps.emit("qwen", "tool_result", {"tool": "fetch_url", "result": result[:200]})
+    return result
+
+
+RAG_URL = os.getenv("RAG_URL", "http://192.168.1.12:8181")
+
+
+@qwen_agent.tool
+async def query_rag(
+    ctx: RunContext[HomelabDeps],
+    query: str,
+    top_k: int = 6,
+) -> str:
+    """Search the coding knowledge base (pydantic-ai, FastAPI, React, asyncio, httpx patterns).
+    Use this before writing code to retrieve relevant patterns and examples.
+    """
+    ctx.deps.emit("qwen", "tool_call", {"tool": "query_rag", "query": query})
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{RAG_URL}/code",
+                json={"query": query, "top_k": top_k},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            result = data.get("context", "No results found.")
+    except Exception as exc:
+        result = f"RAG error: {exc}"
+    ctx.deps.emit("qwen", "tool_result", {"tool": "query_rag", "result": result[:200]})
     return result

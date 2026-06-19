@@ -9,6 +9,61 @@
   overflow: hidden;
 }
 
+@media (max-width: 768px) {
+  .agent-sidebar {
+    width: 100%;
+    flex-direction: row;
+    height: 76px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+  }
+
+  .agent-card {
+    flex: 0 0 160px;
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+  }
+
+  .agent-card:last-child {
+    border-right: none;
+  }
+
+  .card-inner {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .char-wrap {
+    width: 34px;
+    height: 38px;
+  }
+
+  .card-model {
+    display: none;
+  }
+
+  .card-meter {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .agent-sidebar {
+    height: 64px;
+  }
+
+  .agent-card {
+    flex: 0 0 130px;
+  }
+
+  .card-stats {
+    display: none;
+  }
+}
+
 /* ── Card ────────────────────────────────────────────── */
 .agent-card {
   flex: 1;

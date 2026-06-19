@@ -34,6 +34,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, W
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from orchestrator import Event, Orchestrator
 
@@ -154,6 +155,31 @@ async def cancel_job(job_id: str) -> JSONResponse:
     if not orchestrator.cancel_job(job_id):
         raise HTTPException(404, f"Job '{job_id}' not found")
     return JSONResponse({"job_id": job_id, "cancelled": True})
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def get_job_events(job_id: str) -> JSONResponse:
+    events = orchestrator.get_job_events(job_id)
+    if events is None:
+        raise HTTPException(404, f"Job '{job_id}' not found")
+    return JSONResponse(events)
+
+
+# ---------------------------------------------------------------------------
+# User inject
+# ---------------------------------------------------------------------------
+
+class InjectRequest(BaseModel):
+    comment: str
+    job_id:  str
+
+
+@app.post("/api/inject")
+async def inject(req: InjectRequest) -> JSONResponse:
+    if not req.comment.strip():
+        raise HTTPException(400, "comment must not be empty")
+    orchestrator.queue_inject(req.comment.strip())
+    return JSONResponse({"ok": True, "job_id": req.job_id})
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +346,10 @@ async def api_index() -> JSONResponse:
     return JSONResponse({
         "routes": [
             "POST /api/run",
+            "POST /api/inject",
             "GET  /api/jobs",
             "GET  /api/jobs/{job_id}",
+            "GET  /api/jobs/{job_id}/events",
             "POST /api/jobs/{job_id}/cancel",
             "GET  /api/tokens",
             "GET  /api/health",
