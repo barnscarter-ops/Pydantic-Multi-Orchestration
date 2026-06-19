@@ -58,10 +58,17 @@ export default function App() {
       const ts    = new Date(msg.timestamp * 1000).toLocaleTimeString();
       const color = AGENT_COLORS[msg.agent] || "var(--text)";
 
+      if (msg.type === "start" && msg.agent in INITIAL_AGENTS) {
+        setAgents((prev) => ({
+          ...prev,
+          [msg.agent]: { ...prev[msg.agent], status: "thinking" },
+        }));
+      }
+
       if (msg.type === "usage" && msg.data && msg.agent in INITIAL_AGENTS) {
         setAgents((prev) => ({
           ...prev,
-          [msg.agent]: { ...prev[msg.agent], usage: msg.data, status: "active" },
+          [msg.agent]: { ...prev[msg.agent], usage: msg.data, status: "waiting" },
         }));
         // Show token usage inline in the log
         setLogs((prev) => [
@@ -91,6 +98,14 @@ export default function App() {
 
       // Stream deltas: accumulate into the last stream entry for this agent
       if (msg.type === "stream") {
+        if (msg.agent in INITIAL_AGENTS) {
+          setAgents((prev) => {
+            if (prev[msg.agent]?.status !== "active") {
+              return { ...prev, [msg.agent]: { ...prev[msg.agent], status: "active" } };
+            }
+            return prev;
+          });
+        }
         setLogs((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.agent === msg.agent && last.type === "stream") {
@@ -201,12 +216,6 @@ export default function App() {
 
   const handleInject = async (comment) => {
     if (!comment.trim() || !jobId) return;
-    // Optimistically show in log immediately
-    const ts = new Date().toLocaleTimeString();
-    setLogs((prev) => [
-      ...prev.slice(-500),
-      { ts, agent: "you", type: "user_inject", data: { comment }, color: "var(--accent)" },
-    ]);
     await fetch("/api/inject", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

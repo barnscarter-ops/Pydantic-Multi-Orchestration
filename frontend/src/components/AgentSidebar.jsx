@@ -26,8 +26,9 @@ export default function AgentSidebar({ agents }) {
       {Object.entries(agents).map(([name, state], i) => {
         const meta     = AGENT_META[name];
         const { Char } = meta;
-        const isActive = state.status === "active";
-        const isDone   = state.status === "done";
+        const isActive   = state.status === "active";
+        const isThinking = state.status === "thinking";
+        const isDone     = state.status === "done";
         const barPct   = state.usage
           ? Math.min((state.usage.input_tokens / maxIn) * 100, 100)
           : 0;
@@ -44,7 +45,7 @@ export default function AgentSidebar({ agents }) {
             <div className="card-inner">
               <div className="card-avatar-col">
                 <div className="char-wrap">
-                  <Char active={isActive} />
+                  <Char active={isActive || isThinking} />
                 </div>
                 <span className={`status-dot ${state.status}`} />
               </div>
@@ -53,7 +54,7 @@ export default function AgentSidebar({ agents }) {
                 <div className="card-header-row">
                   <span className="card-role">{meta.role}</span>
                   <span className={`card-badge ${state.status}`}>
-                    {state.status === "active" ? "LIVE" : state.status.toUpperCase()}
+                    {{ active: "LIVE", thinking: "THINKING", waiting: "WAIT", idle: "IDLE", done: "DONE" }[state.status] ?? state.status.toUpperCase()}
                   </span>
                 </div>
 
