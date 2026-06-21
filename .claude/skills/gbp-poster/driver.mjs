@@ -4,9 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-const DEFAULT_CONFIG = 'C:\\Users\\carte\\.codex\\plugins\\grizzly-gbp-poster\\config.local.json';
+const DEFAULT_CONFIG = 'C:\\Workspace\\Active\\SEO-Agents-App\\config\\gbp-poster.config.json';
 const USER_DATA_DIR = path.join(os.homedir(), '.claude', 'gbp-session');
 const VIEWPORT = { width: 1365, height: 900 };
+const DEBUG_DIR = 'C:\\Workspace\\Active\\SEO-Agents-App\\outputs\\gbp-debug';
+const VERIFY_DELAY_MS = 60_000;
+const VERIFY_ATTEMPTS = 5;
 
 function parseArgs(argv) {
     const args = { dryRun: false, auth: false, headless: false, date: null, config: DEFAULT_CONFIG };
@@ -104,29 +107,55 @@ async function openUpdateComposer(page) {
         await addPost.click({ timeout: 10000 });
     }
 
-    // Composer may open inside an iframe (Google Search Knowledge Panel flow) or directly.
-    // Wait for whichever appears first.
+    // Composer may open as a dialog on the Search results page (current flow),
+    // inside an iframe (older Knowledge Panel flow), or directly. Wait for the
+    // actual composer to render — NOT just any contenteditable, since Google's
+    // search box is also contenteditable and would resolve instantly.
     await Promise.race([
-        page.locator('[contenteditable="true"]').first().waitFor({ timeout: 20000 }),
+        page.locator('div[role="dialog"]')
+            .filter({ has: page.getByText(/Add post|Schedule this post|Description/i) })
+            .first().waitFor({ timeout: 20000 }),
         page.frameLocator('iframe[src*="promote/updates/add"]')
             .locator('[contenteditable="true"], textarea').first()
             .waitFor({ timeout: 20000 }),
     ]).catch(() => {});
 }
 
-// Returns a FrameLocator if the composer opened in an iframe, otherwise the page.
+// Returns the composer context. Google now renders the GBP "Add post" composer
+// as a modal dialog on the Google Search results page (the merged "Your business
+// on Google" experience), but older accounts may still open it inside an iframe.
+// Scoping to the dialog/iframe is critical: otherwise locators like
+// [contenteditable="true"] match Google's own search box on the page.
 async function getComposerCtx(page) {
+    // 1. New merged Search UI: composer is a dialog containing "Add post".
+    const dialog = page.locator('div[role="dialog"]')
+        .filter({ has: page.getByText(/Add post|Schedule this post|Description/i) })
+        .first();
+    try {
+        await dialog.waitFor({ timeout: 4000 });
+        if (await dialog.count()) return dialog;
+    } catch {}
+
+    // 2. Legacy iframe flow.
     const ifl = page.frameLocator('iframe[src*="promote/updates/add"]');
     try {
         await ifl.locator('[contenteditable="true"], textarea').first().waitFor({ timeout: 2000 });
         return ifl;
-    } catch {
-        return page;
-    }
+    } catch {}
+
+    // 3. Fallback: the page itself (legacy business.google.com native composer).
+    return page;
 }
 
 function composerInput(ctx) {
-    return ctx.locator('[contenteditable="true"], textarea:not([name="q"])').first();
+    // Prefer the explicitly-labelled Description field; fall back to the first
+    // editable element within the (already dialog-scoped) composer context.
+    return ctx.locator(
+        'textarea[aria-label="Description" i], [contenteditable="true"][aria-label="Description" i], ' +
+        'textarea[placeholder="Description" i], [placeholder="Description" i], ' +
+        'textarea:not([name="q"]):not([aria-label*="Search" i]), ' +
+        '[contenteditable="true"]:not([aria-label*="Search" i])'
+    ).first();
 }
 
 async function attachImage(ctx, imagePath, page) {
@@ -182,12 +211,29 @@ function captionSnippet(caption) {
     return firstLine.replace(/\s+/g, ' ').slice(0, 60).trim();
 }
 
-async function verifyPosted(page, caption) {
-    const snippet = captionSnippet(caption);
+async function saveVerificationSnapshot(page, caption, visible, attempt) {
+    fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const screenshot = path.join(DEBUG_DIR, `verify-attempt-${attempt}-${stamp}.png`);
+    const textFile = path.join(DEBUG_DIR, `verify-attempt-${attempt}-${stamp}.json`);
+    await page.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
+    const texts = await page.locator('a,button,div[role="button"],span,h1,h2,h3,textarea,[contenteditable="true"],input')
+        .evaluateAll(nodes => [...new Set(nodes.map(n => (
+            n.innerText || n.textContent || n.getAttribute('aria-label') || n.getAttribute('placeholder') || ''
+        ).trim()).filter(Boolean).slice(0, 300))])
+        .catch(() => []);
+    fs.writeFileSync(textFile, JSON.stringify({
+        url: page.url(),
+        caption_snippet: captionSnippet(caption),
+        verified_visible: visible,
+        verification_attempt: attempt,
+        verification_attempts: VERIFY_ATTEMPTS,
+        texts,
+    }, null, 2));
+    return { screenshot, textFile };
+}
 
-    // Give GBP a moment to index the new post before reloading
-    await page.waitForTimeout(3000);
-
+async function checkPostVisible(page, snippet) {
     await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
@@ -215,21 +261,36 @@ async function verifyPosted(page, caption) {
         }
     }
 
-    if (!visible) return { verified: false, postUrl: null };
+    return visible;
+}
 
-    const postUrl = await page.evaluate(() => {
-        const anchor = [...document.querySelectorAll('a[href*="localPost"], a[href*="/posts/"]')][0];
-        return anchor ? anchor.href : null;
-    }).catch(() => null);
-    return { verified: true, postUrl };
+async function verifyPosted(page, caption) {
+    const snippet = captionSnippet(caption);
+    let verificationSnapshot = null;
+
+    for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1) {
+        // Give GBP another minute to index/moderate the submitted post before reloading.
+        await page.waitForTimeout(VERIFY_DELAY_MS);
+        const visible = await checkPostVisible(page, snippet);
+        verificationSnapshot = await saveVerificationSnapshot(page, caption, visible, attempt);
+
+        if (visible) {
+            const postUrl = await page.evaluate(() => {
+                const anchor = [...document.querySelectorAll('a[href*="localPost"], a[href*="/posts/"]')][0];
+                return anchor ? anchor.href : null;
+            }).catch(() => null);
+            return { verified: true, postUrl, verificationSnapshot, verificationAttempts: attempt };
+        }
+    }
+
+    return { verified: false, postUrl: null, verificationSnapshot, verificationAttempts: VERIFY_ATTEMPTS };
 }
 
 async function saveFailureArtifacts(page) {
-    const outDir = 'C:\\Workspace\\Active\\SEO-Agents-App\\outputs\\gbp-debug';
-    fs.mkdirSync(outDir, { recursive: true });
+    fs.mkdirSync(DEBUG_DIR, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const screenshot = path.join(outDir, `failure-${stamp}.png`);
-    const textFile = path.join(outDir, `failure-${stamp}.json`);
+    const screenshot = path.join(DEBUG_DIR, `failure-${stamp}.png`);
+    const textFile = path.join(DEBUG_DIR, `failure-${stamp}.json`);
     await page.screenshot({ path: screenshot, fullPage: true }).catch(() => {});
     const texts = await page.locator('a,button,div[role="button"],span,h1,h2,h3,textarea,[contenteditable="true"],input')
         .evaluateAll(nodes => [...new Set(nodes.map(n => (
@@ -262,19 +323,49 @@ async function main() {
         return;
     }
 
-    const workbookPath = config.workbook_path;
+    const workbookPath = path.join(config.config_dir, config.workbook_path);
     if (!workbookPath || !fs.existsSync(workbookPath)) {
+    // Fallback to default config if workbook_path is not set
+    if (!config.workbook_path) {
+        console.warn('Workbook path not set in config, using default: C:\\Workspace\\Active\\SEO-Agents-App\\outputs\\gbp_posting_schedule.xlsx');
+        workbookPath = 'C:\\Workspace\\Active\\SEO-Agents-App\\outputs\\gbp_posting_schedule.xlsx';
+    }
         throw new Error(`Workbook not found: ${workbookPath || '(missing workbook_path)'}`);
     }
 
     const postData = parseSchedule(workbookPath, args.date);
     const payload = buildPayload(postData);
     if (!payload.caption) throw new Error(`Post ${args.date} has no caption/body text.`);
+
+    // If workbook image path is missing/stale, fall back to the curated folder by date prefix.
+    // gbp-photo-pick.mjs renames photos as {date}-{service}.{ext} but only updates the markdown
+    // schedule — not the Excel workbook — so workbook paths can lag behind curation.
+    if (payload.imagePath && !fs.existsSync(payload.imagePath)) {
+        const curatedDir = config.curated_photo_folder || '';
+        if (curatedDir && fs.existsSync(curatedDir)) {
+            const prefix = `${payload.date}-`;
+            const candidates = fs.readdirSync(curatedDir)
+                .filter(f => f.toLowerCase().startsWith(prefix.toLowerCase()))
+                .sort();
+            if (candidates.length > 0) {
+                const fallback = path.join(curatedDir, candidates[0]);
+                console.warn(`[driver] Workbook image not found (${payload.imagePath}) → curated fallback: ${fallback}`);
+                payload.imagePath = fallback;
+            }
+        }
+    }
+
     if (payload.imagePath && !fs.existsSync(payload.imagePath)) {
         throw new Error(`Post image not found: ${payload.imagePath}`);
     }
     if (!args.dryRun && payload.status !== 'Approved') {
-        throw new Error(`Post ${args.date} is not Approved. Current status: ${payload.status || '(blank)'}`);
+        // Approval gate, not a failure: the post is awaiting human approval in the
+        // workbook. Exit 4 (distinct from 1=failed / 3=unverified) so the caller can
+        // classify this as needs-approval instead of recording a hard posting error.
+        const message = `Post ${args.date} is not Approved. Current status: ${payload.status || '(blank)'}`;
+        emitResult({ result: 'needs_approval', date: payload.date, verified: false, postUrl: null, error: message });
+        console.error(message);
+        process.exit(4);
     }
     if (!args.dryRun && payload.posted) {
         throw new Error(`Post ${args.date} is already marked Posted in the workbook.`);
@@ -310,12 +401,12 @@ async function main() {
             await attachImage(ctx, payload.imagePath, page);
         }
         await clickComposerPost(ctx, page);
-        const { verified, postUrl } = await verifyPosted(page, payload.caption);
-        emitResult({ result: 'posted', date: payload.date, verified, postUrl });
+        const { verified, postUrl, verificationSnapshot, verificationAttempts } = await verifyPosted(page, payload.caption);
+        emitResult({ result: 'posted', date: payload.date, verified, postUrl, verificationSnapshot, verificationAttempts });
         if (verified) {
             console.log('Post submitted and verified on GBP.');
         } else {
-            console.error('Post was submitted (composer closed cleanly) but could not be verified in the Posts list. Check GBP manually before retrying — retrying may create a duplicate.');
+            console.error(`Post was submitted (composer closed cleanly) but could not be verified in the Posts list after ${VERIFY_ATTEMPTS} checks. Check GBP manually before retrying — retrying may create a duplicate.`);
             process.exitCode = 3;
         }
     } catch (e) {
