@@ -3,6 +3,9 @@ import xlsx from 'xlsx';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
 
 const DEFAULT_CONFIG = 'C:\\Workspace\\Active\\SEO-Agents-App\\config\\gbp-poster.config.json';
 const USER_DATA_DIR = path.join(os.homedir(), '.claude', 'gbp-session');
@@ -10,6 +13,47 @@ const VIEWPORT = { width: 1365, height: 900 };
 const DEBUG_DIR = 'C:\\Workspace\\Active\\SEO-Agents-App\\outputs\\gbp-debug';
 const VERIFY_DELAY_MS = 60_000;
 const VERIFY_ATTEMPTS = 5;
+// Pre-submit compose steps may be retried (nothing has been posted yet). Once the
+// Post button is clicked we NEVER retry — a re-send would create a duplicate post.
+const POST_ATTEMPTS = 2;
+
+// Map an error message to a coarse, actionable failure reason so logs/results say
+// *why* a run failed without a human reading a stack trace. Order matters: the
+// human-blocking cases (session/captcha) are checked before generic timeouts.
+function classifyFailure(message) {
+    const m = String(message || '').toLowerCase();
+    if (/sign in|signed out|logged out|session expired|accounts\.google\.com/.test(m)) return 'session_expired';
+    if (/captcha|unusual traffic|not a robot|verify it'?s you|\/sorry\//.test(m)) return 'captcha';
+    if (/image not found|no post found|no caption|workbook not found|not approved/.test(m)) return 'data';
+    if (/could not find|waiting for|timeout|timed out|exceeded|did not register/.test(m)) return 'ui_changed_or_timeout';
+    return 'unknown';
+}
+
+// Only transient/UI failures are worth retrying. session_expired needs re-auth and
+// captcha needs a human — retrying those just wastes a browser launch.
+const RETRYABLE = new Set(['ui_changed_or_timeout']);
+
+// Step-level progress to stderr (stdout is reserved for the JSON result the caller parses).
+function logStep(step, extra) {
+    const stamp = new Date().toISOString();
+    console.error(`[gbp-driver ${stamp}] ${step}${extra ? ' ' + JSON.stringify(extra) : ''}`);
+}
+
+// Detect Google anti-bot interstitials early and fail with a clear, categorizable
+// message instead of letting a downstream "could not find <button>" timeout hide it.
+async function detectBlockingInterstitial(page) {
+    if (/\/sorry\/|recaptcha/i.test(page.url())) {
+        throw new Error(`CAPTCHA / unusual-traffic interstitial from Google (url: ${page.url()}). A human must solve it, then re-run.`);
+    }
+    const captchaFrame = page.locator('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]').first();
+    if (await captchaFrame.isVisible({ timeout: 500 }).catch(() => false)) {
+        throw new Error('CAPTCHA challenge detected on the page. A human must solve it, then re-run.');
+    }
+    const challenge = page.getByText(/unusual traffic|verify it'?s you|confirm you'?re not a robot|i'?m not a robot/i).first();
+    if (await challenge.isVisible({ timeout: 500 }).catch(() => false)) {
+        throw new Error('Google anti-bot challenge detected ("unusual traffic" / "verify it\'s you"). A human must complete it, then re-run.');
+    }
+}
 
 function parseArgs(argv) {
     const args = { dryRun: false, auth: false, headless: false, date: null, config: DEFAULT_CONFIG };
@@ -84,11 +128,21 @@ async function assertLoggedIn(page) {
     if (await signIn.isVisible({ timeout: 1000 }).catch(() => false)) {
         throw new Error('GBP session is logged out (Sign in button visible). Re-authenticate with: node driver.mjs --auth');
     }
+    // Expired sessions sometimes land on the public GBP marketing page instead of
+    // redirecting to accounts.google.com. Catch it explicitly so it's reported as
+    // session_expired (→ needs --auth) rather than a downstream ui_changed timeout.
+    const loggedOutMarketing = page.getByText(
+        /Stand out on Google|free Business Profile|Get your free Business Profile|Manage your Business Profile/i,
+    ).first();
+    if (await loggedOutMarketing.isVisible({ timeout: 1000 }).catch(() => false)) {
+        throw new Error('GBP session expired (logged-out Business Profile marketing page shown). Re-authenticate with: node driver.mjs --auth');
+    }
 }
 
 async function openUpdateComposer(page) {
     await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await detectBlockingInterstitial(page);
     await assertLoggedIn(page);
 
     const directAddUpdate = page.locator('button:has-text("Add update")').first();
@@ -305,6 +359,39 @@ function emitResult(result) {
     console.log(JSON.stringify(result));
 }
 
+// Open the composer, fill it, attach the image, and submit. The PRE-submit work is
+// retried on transient/UI failures; once `submitted` flips true we rethrow without
+// retrying so a half-accepted post is never re-sent (duplicate guard).
+async function composeAndSubmit(page, payload) {
+    let lastErr;
+    for (let attempt = 1; attempt <= POST_ATTEMPTS; attempt += 1) {
+        let submitted = false;
+        try {
+            logStep(`compose attempt ${attempt}/${POST_ATTEMPTS}`, { date: payload.date });
+            await openUpdateComposer(page);
+            const ctx = await getComposerCtx(page);
+            await fillComposerDescription(ctx, payload.caption, page);
+            if (payload.imagePath) {
+                await attachImage(ctx, payload.imagePath, page);
+            }
+            logStep('submitting post');
+            submitted = true; // past here a failure must NOT trigger a re-submit
+            await clickComposerPost(ctx, page);
+            logStep('post submitted, composer closed');
+            return;
+        } catch (e) {
+            lastErr = e;
+            const reason = classifyFailure(e.message);
+            logStep('compose failed', { attempt, reason, submitted, message: String(e.message || e) });
+            if (submitted || !RETRYABLE.has(reason) || attempt >= POST_ATTEMPTS) throw e;
+            logStep('retrying after reload (nothing was submitted)');
+            await page.goto('https://business.google.com/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+            await page.waitForTimeout(2000);
+        }
+    }
+    throw lastErr;
+}
+
 async function main() {
     const args = parseArgs(process.argv.slice(2));
 
@@ -394,13 +481,7 @@ async function main() {
     const page = await context.newPage();
 
     try {
-        await openUpdateComposer(page);
-        const ctx = await getComposerCtx(page);
-        await fillComposerDescription(ctx, payload.caption, page);
-        if (payload.imagePath) {
-            await attachImage(ctx, payload.imagePath, page);
-        }
-        await clickComposerPost(ctx, page);
+        await composeAndSubmit(page, payload);
         const { verified, postUrl, verificationSnapshot, verificationAttempts } = await verifyPosted(page, payload.caption);
         emitResult({ result: 'posted', date: payload.date, verified, postUrl, verificationSnapshot, verificationAttempts });
         if (verified) {
@@ -410,9 +491,10 @@ async function main() {
             process.exitCode = 3;
         }
     } catch (e) {
+        const reason = classifyFailure(e.message);
         const artifacts = await saveFailureArtifacts(page);
-        emitResult({ result: 'failed', date: payload.date, verified: false, postUrl: null, error: String(e.message || e) });
-        console.error('Error during GBP posting:', e.message || e);
+        emitResult({ result: 'failed', date: payload.date, verified: false, postUrl: null, failure_reason: reason, error: String(e.message || e) });
+        console.error(`Error during GBP posting [${reason}]:`, e.message || e);
         console.error(`Debug artifacts: ${JSON.stringify(artifacts)}`);
         process.exitCode = 1;
     } finally {
@@ -420,7 +502,16 @@ async function main() {
     }
 }
 
-main().catch((error) => {
-    console.error(error.message || error);
-    process.exit(1);
-});
+// Run only when executed directly so a self-check (or other caller) can import
+// classifyFailure without launching a browser.
+const invokedDirectly = process.argv[1]
+    && pathToFileURL(fs.realpathSync(process.argv[1])).href === pathToFileURL(fs.realpathSync(__filename)).href;
+
+if (invokedDirectly) {
+    main().catch((error) => {
+        console.error(error.message || error);
+        process.exit(1);
+    });
+}
+
+export { classifyFailure };
