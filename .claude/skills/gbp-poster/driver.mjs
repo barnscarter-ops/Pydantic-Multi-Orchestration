@@ -132,7 +132,7 @@ async function assertLoggedIn(page) {
     // redirecting to accounts.google.com. Catch it explicitly so it's reported as
     // session_expired (→ needs --auth) rather than a downstream ui_changed timeout.
     const loggedOutMarketing = page.getByText(
-        /Stand out on Google|free Business Profile|Get your free Business Profile|Manage your Business Profile/i,
+        /Stand out on Google|free Business Profile|Get your free Business Profile/i,
     ).first();
     if (await loggedOutMarketing.isVisible({ timeout: 1000 }).catch(() => false)) {
         throw new Error('GBP session expired (logged-out Business Profile marketing page shown). Re-authenticate with: node driver.mjs --auth');
