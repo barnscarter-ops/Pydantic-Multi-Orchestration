@@ -86,6 +86,7 @@ opentelemetry-sdk==1.39.1
 opentelemetry-semantic-conventions==0.60b1
 opentelemetry-util-http==0.60b1
 packaging==25.0
+psutil==6.1.1
 pathable==0.6.0
 platformdirs==4.10.0
 prompt_toolkit==3.0.52

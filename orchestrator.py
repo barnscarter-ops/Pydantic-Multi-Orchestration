@@ -23,6 +23,7 @@ from typing import Any
 from agents import (
     HomelabDeps, TokenUsage,
     sonnet_agent, nemotron_agent, qwen_agent, gemini_agent, _GEMINI_AVAILABLE,
+    chat_agent,
 )
 
 MAX_DEBATE_ROUNDS  = 2
@@ -297,33 +298,21 @@ class Orchestrator:
             self._emit("sonnet", "debrief", {"text": f"Build finished! Check the execution log above for file paths and commands. ({exc})"})
 
     async def chat_respond(self, message: str) -> None:
-        """Stream a conversational Sonnet response to an arbitrary user message."""
+        """Handle a Slack DM or chat message using the dedicated chat agent."""
         self._emit("system", "user_inject", {"comment": message})
         self._chat_history.append({"role": "user", "content": message})
-
-        context = ""
-        if self._last_task:
-            snippet = "\n".join(self._last_results[:3])[:600]
-            context = (
-                f"Context: the user recently ran a task: '{self._last_task}'. "
-                f"Summary of what was done: {snippet}\n\n"
-            )
 
         history = "\n".join(
             f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
             for m in self._chat_history[-10:]
         )
 
-        prompt = (
-            "You are a helpful assistant inside a multi-agent coding orchestrator. "
-            "Answer questions, explain what was built, suggest improvements, or just chat naturally. "
-            f"{context}"
-            f"Conversation so far:\n{history}\nAssistant:"
-        )
+        prompt = f"Conversation so far:\n{history}\nAssistant:"
 
-        deps = HomelabDeps(task="chat", emit=self._emit)
+        agent = chat_agent if chat_agent is not None else sonnet_agent
+        deps  = HomelabDeps(task="chat", emit=self._emit)
         try:
-            result = await self._call_stream("sonnet", sonnet_agent, prompt, deps)
+            result = await self._call_stream("sonnet", agent, prompt, deps)
             self._chat_history.append({"role": "assistant", "content": result.output})
         except Exception:
             pass

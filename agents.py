@@ -444,6 +444,7 @@ async def fetch_url(
 
 
 RAG_URL = os.getenv("RAG_URL", "http://192.168.1.12:8181")
+MCC_URL = os.getenv("MCC_URL", "http://localhost:3011")
 
 
 @qwen_agent.tool
@@ -469,3 +470,182 @@ async def query_rag(
         result = f"RAG error: {exc}"
     ctx.deps.emit("qwen", "tool_result", {"tool": "query_rag", "result": result[:200]})
     return result
+
+
+# ---------------------------------------------------------------------------
+# Chat agent — used for Slack DM / conversational control of HomeLab + MCC
+# ---------------------------------------------------------------------------
+
+_CHAT_SYSTEM = """\
+You are the HomeLab & MCC control agent for Carter Barns' workstation (CartersPC).
+
+WHAT YOU KNOW:
+- CartersPC: Windows 11 Pro, RTX 4060 Ti 16GB, runs PM2-managed services
+- MCC (Marketing Control Center) dashboard: localhost:3011, manages SEO workflows and Maverick AI agent
+- HomeLab Proxmox server (AIWA): 192.168.1.12, runs RAG API (port 8181), Prometheus (9090)
+- PM2 manages: orchestrator, homelab-slack-bot, mcc-dashboard, mav-email-watcher, customer-chat-server, a2p-approval-watcher
+- Maverick is the AI agent that handles HCP (Housecall Pro) estimates for Grizzly Electrical Solutions
+
+TOOLS AVAILABLE:
+- run_shell: execute any shell command on CartersPC
+- get_system_metrics: live CPU, RAM, disk, GPU stats
+- pm2_list: list all PM2 processes and their status
+- mcc_get: GET any MCC API endpoint (e.g., /api/workflows/seo, /api/orchestrator/status)
+- mcc_post: POST to MCC API to trigger actions (e.g., run SEO workflow)
+- read_file: read any file on CartersPC
+
+BEHAVIOR:
+- Answer questions about the system by using tools first, then interpreting results
+- For status questions, check metrics or PM2 before answering
+- For "run X workflow" requests, use mcc_post to trigger it
+- Keep responses concise — this is a Slack chat
+- Never make up system state — always use a tool to verify
+"""
+
+chat_agent: Agent[HomelabDeps] | None = None
+
+if sonnet_agent is not None and _SONNET_AVAILABLE:
+    from pydantic_ai.models.anthropic import AnthropicModel as _AModel  # type: ignore[import]
+    _chat_model = _AModel(
+        SONNET_MODEL,
+        provider=AnthropicProvider(
+            api_key=ANTHROPIC_API_KEY or "placeholder",
+            http_client=_anthropic_http,
+        ),
+    )
+    chat_agent = Agent(
+        _chat_model,
+        deps_type=HomelabDeps,
+        output_type=str,
+        system_prompt=_CHAT_SYSTEM,
+    )
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def run_shell(
+    ctx: RunContext[HomelabDeps],
+    command: str,
+    cwd: str | None = None,
+) -> str:
+    """Execute a shell command on CartersPC and return exit code + output."""
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                command, shell=True, capture_output=True, text=True,
+                timeout=60, cwd=cwd,
+            )
+
+        res = await loop.run_in_executor(None, _run)
+        return (
+            f"EXIT {res.returncode}\n"
+            f"STDOUT:\n{(res.stdout or '')[-8_000:]}\n"
+            f"STDERR:\n{(res.stderr or '')[-2_000:]}"
+        )
+    except subprocess.TimeoutExpired:
+        return "Command timed out (60s)."
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def pm2_list(ctx: RunContext[HomelabDeps]) -> str:
+    """List all PM2 processes with their name, status, CPU %, and memory."""
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _run() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                "pm2 jlist", shell=True, capture_output=True, text=True, timeout=15,
+            )
+
+        res = await loop.run_in_executor(None, _run)
+        if res.returncode != 0:
+            return f"pm2 error: {res.stderr}"
+        import json as _json
+        procs = _json.loads(res.stdout or "[]")
+        lines = []
+        for p in procs:
+            name   = p.get("name", "?")
+            status = p.get("pm2_env", {}).get("status", "?")
+            cpu    = p.get("monit", {}).get("cpu", 0)
+            mem_mb = round(p.get("monit", {}).get("memory", 0) / 1024 / 1024, 1)
+            lines.append(f"{name}: {status} | CPU {cpu}% | RAM {mem_mb}MB")
+        return "\n".join(lines) if lines else "No processes found."
+    except Exception as exc:
+        return f"pm2_list error: {exc}"
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def get_system_metrics(ctx: RunContext[HomelabDeps]) -> str:
+    """Return live CPU, RAM, disk, and GPU metrics for CartersPC."""
+    try:
+        import psutil  # type: ignore[import]
+        cpu_pct  = psutil.cpu_percent(interval=1)
+        ram      = psutil.virtual_memory()
+        disk     = psutil.disk_usage("C:\\")
+
+        lines = [
+            f"CPU: {cpu_pct}%",
+            f"RAM: {ram.used // 1024 // 1024}MB / {ram.total // 1024 // 1024}MB ({ram.percent}%)",
+            f"Disk C: {disk.used // 1024 // 1024 // 1024}GB / {disk.total // 1024 // 1024 // 1024}GB ({disk.percent}%)",
+        ]
+
+        # GPU via nvidia-smi (RTX 4060 Ti)
+        loop = asyncio.get_event_loop()
+
+        def _gpu() -> str:
+            r = subprocess.run(
+                'nvidia-smi --query-gpu=gpu_name,utilization.gpu,memory.used,memory.total,temperature.gpu '
+                '--format=csv,noheader,nounits',
+                shell=True, capture_output=True, text=True, timeout=5,
+            )
+            return r.stdout.strip()
+
+        gpu_out = await loop.run_in_executor(None, _gpu)
+        if gpu_out:
+            parts = [p.strip() for p in gpu_out.split(",")]
+            if len(parts) >= 5:
+                lines.append(f"GPU: {parts[0]} | util {parts[1]}% | VRAM {parts[2]}/{parts[3]}MB | temp {parts[4]}°C")
+
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Metrics error: {exc}"
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def mcc_get(ctx: RunContext[HomelabDeps], endpoint: str) -> str:
+    """GET an MCC API endpoint (e.g., /api/workflows/seo, /api/orchestrator/status).
+    Returns the JSON response as a string.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{MCC_URL}{endpoint}")
+            resp.raise_for_status()
+            return resp.text[:6_000]
+    except Exception as exc:
+        return f"MCC GET {endpoint} error: {exc}"
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def mcc_post(ctx: RunContext[HomelabDeps], endpoint: str, body: dict) -> str:
+    """POST to an MCC API endpoint (e.g., /api/workflows/seo/actions/run).
+    Pass body as a JSON object. Returns the response.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{MCC_URL}{endpoint}", json=body)
+            resp.raise_for_status()
+            return resp.text[:6_000]
+    except Exception as exc:
+        return f"MCC POST {endpoint} error: {exc}"
+
+
+@chat_agent.tool  # type: ignore[union-attr]
+async def read_file_chat(ctx: RunContext[HomelabDeps], path: str) -> str:
+    """Read a file from CartersPC filesystem."""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")[:20_000]
+    except Exception as exc:
+        return f"Error reading {path}: {exc}"
