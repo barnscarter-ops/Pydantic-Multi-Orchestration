@@ -482,7 +482,20 @@ async function main() {
 
     try {
         await composeAndSubmit(page, payload);
-        const { verified, postUrl, verificationSnapshot, verificationAttempts } = await verifyPosted(page, payload.caption);
+        // composeAndSubmit returning means the post WAS submitted (the composer
+        // closed, which GBP treats as acceptance). A verification failure here
+        // must NOT be reported as 'failed' (exit 1) — that masks the successful
+        // submission and causes a later re-run to double-post, because the caller
+        // sees a hard error and retries a post that is already live. Wrap
+        // verification so any throw becomes a 'posted + unverified' (exit 3),
+        // which the caller treats as "check manually, do not auto-retry".
+        let verified = false, postUrl = null, verificationSnapshot = null, verificationAttempts = 0;
+        try {
+            ({ verified, postUrl, verificationSnapshot, verificationAttempts } = await verifyPosted(page, payload.caption));
+        } catch (verifyErr) {
+            console.error(`Post was submitted but verification crashed (${verifyErr.message}). Treat as posted-but-unverified — do NOT retry without checking GBP first.`);
+            verificationSnapshot = await saveFailureArtifacts(page).catch(() => null);
+        }
         emitResult({ result: 'posted', date: payload.date, verified, postUrl, verificationSnapshot, verificationAttempts });
         if (verified) {
             console.log('Post submitted and verified on GBP.');
